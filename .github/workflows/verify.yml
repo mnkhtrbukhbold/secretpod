@@ -23,6 +23,8 @@ jobs:
       - run: flutter test
         working-directory: secretpod/secretpod_flutter
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
+        env:
+          SECRETPOD_DEMO_CONTAINER_TEST: '1'
       - run: for script in scripts/start.sh scripts/setup.sh scripts/host.sh scripts/install.sh; do sh -n "$script"; done
       - run: sh scripts/test-start.sh
   container:

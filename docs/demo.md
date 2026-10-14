@@ -37,10 +37,12 @@ data also causes the seed to be loaded on the next visit. An unreadable or
 incompatible saved dataset requires an explicit reset; the app does not silently
 erase it or fall back to a live server.
 
-The demo build disables Flutter's generated offline service worker. The web
-server sends `Cache-Control: no-store` for the app shell, bootstrap,
-executable JavaScript, service-worker file, manifest, and version metadata.
-Supporting assets have a one-hour cache lifetime with revalidation. An old service
+The demo build disables Flutter's generated offline service worker. Browsers
+revalidate the app shell, JavaScript, and supporting assets on each request.
+Railway's CDN can cache the app shell for 60 seconds and runtime files/assets for
+one hour, using `s-maxage`. Health checks, the service-worker file, and version
+metadata remain `no-store`. Configure the CDN to purge **all** cached content
+after each successful deployment because Flutter uses stable filenames. An old service
 worker installed by another deployment on the same origin can intercept requests
 before they reach the server. If old code persists, remove that site's service
 worker and cached site data in browser settings, then reopen the demo; this also
@@ -99,6 +101,7 @@ Configure one Railway service with these settings:
 | Healthcheck path | `/healthz` |
 | Healthcheck timeout | 60 seconds |
 | Replicas | 1 |
+| CDN | Enabled; HTML caching Auto; purge All on successful deploy; stale-while-revalidate off |
 | Database, volumes, credentials | None |
 
 Set `/healthz` as the healthcheck path in the service's deployment settings, then
@@ -118,6 +121,40 @@ Once the `codex/demo` branch has been pushed, connect it with
 `railway service source connect --repo mnkhtrbukhbold/secretpod --branch codex/demo`.
 For subsequent manual releases, use `railway redeploy --from-source --yes`;
 `railway service status` and `railway logs` show the deployment result.
+
+## CDN caching and bot protection
+
+Apply the CDN settings before publishing cacheable demo files:
+
+```sh
+railway cdn enable
+railway cdn update --html-caching auto --purge-on-deploy all --no-swr
+```
+
+The CDN serves repeated downloads without service compute or network-egress
+charges. Both the Railway domain and any custom domains use these settings.
+All demo responses contain public, synthetic files; browser-local edits are never
+sent to the web server or shared cache. Keep browser `max-age=0` and the automatic
+**all-content** purge together so updates to stable Flutter filenames are visible
+after a release. If a deployment did not purge, use `railway cdn purge all`.
+See [Railway's CDN guide](https://docs.railway.com/guides/cache-headers-cdn).
+
+Under Attack Mode adds a browser check at Railway's edge before traffic reaches
+the demo. It is enabled until explicitly switched off:
+
+```sh
+railway waf under-attack enable --duration forever
+railway waf under-attack status
+# Turn off the challenge when it is no longer wanted:
+railway waf under-attack disable
+```
+
+Non-browser clients without clearance may receive HTTP 429, including external
+command-line health checks and link-preview crawlers. Verify the public app in a
+browser after enabling it; Railway's deployment health check runs separately.
+This reduces automated traffic but does not guarantee that every bot is blocked.
+Keep the workspace usage hard limit as the final spending control. See
+[Railway's WAF guidance](https://docs.railway.com/guides/lock-down-production-project).
 
 ## Verify before publishing
 
