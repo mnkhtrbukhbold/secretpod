@@ -69,4 +69,12 @@ __pycache__/
 secrets/master_key
 .operation.lock
 local-root.crt
+# Local agent records and screenshots are not public release inputs.
+docs/superpowers/
+docs/verification.md
+screenshots/
+AGENTS.md
+artifacts/
+.vscode/
+secretpod/.github/
 
