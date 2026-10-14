@@ -1,0 +1,40 @@
+account:
+  - register:
+  - login:
+  - previewInvitation:
+  - registerFromInvitation:
+  - declineInvitation:
+invitation:
+  - create:
+  - inbox:
+  - outgoing:
+  - accept:
+  - decline:
+  - revoke:
+  - profile:
+  - updatePolicy:
+profile:
+  - updateName:
+  - updateEmail:
+  - updateTheme:
+  - changePassword:
+vault:
+  - organizations:
+  - createOrganization:
+  - renameOrganization:
+  - members:
+  - addMember:
+  - memberRemovalSecrets:
+  - removeMember:
+  - setSecretRotationRequired:
+  - listSecrets:
+  - summary:
+  - saveSecret:
+  - revealSecret:
+  - revealSecretFields:
+  - deleteSecret:
+  - activity:
+  - secretActivity:
+  - copySecret:
+  - confirmCopy:
+  - logout:

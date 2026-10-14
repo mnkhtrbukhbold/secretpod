@@ -1,0 +1,6 @@
+class: OrganizationView
+fields:
+  id: String
+  name: String
+  role: String
+  createdAt: DateTime

@@ -1,0 +1,40 @@
+name: Verify
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.47.7'
+          cache: true
+      - run: flutter pub get --enforce-lockfile
+        working-directory: secretpod
+      - run: dart analyze
+        working-directory: secretpod
+      - run: dart test
+        working-directory: secretpod/secretpod_server
+      - run: flutter test
+        working-directory: secretpod/secretpod_flutter
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
+      - run: sh -n scripts/start.sh scripts/setup.sh
+      - run: sh scripts/test-start.sh
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: secretpod:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: python3 tests/docker_lifecycle.py --image secretpod:test

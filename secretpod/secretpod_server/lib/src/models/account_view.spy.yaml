@@ -1,0 +1,7 @@
+class: AccountView
+fields:
+  id: String
+  name: String
+  email: String
+  invitationPolicy: String?
+  themeMode: String?

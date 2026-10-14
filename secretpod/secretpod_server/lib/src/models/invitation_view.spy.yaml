@@ -1,0 +1,14 @@
+class: InvitationView
+fields:
+  id: String
+  organizationId: String
+  organizationName: String
+  inviterName: String
+  inviterEmail: String
+  recipientEmail: String
+  recipientName: String
+  role: String
+  status: String
+  createdAt: DateTime
+  expiresAt: DateTime
+  respondedAt: DateTime?

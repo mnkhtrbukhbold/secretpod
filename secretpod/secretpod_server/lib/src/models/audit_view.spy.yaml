@@ -1,0 +1,11 @@
+class: AuditView
+fields:
+  id: String
+  actor: String
+  action: String
+  target: String
+  createdAt: DateTime
+  secretId: String?
+  actorId: String?
+  version: int?
+  details: String?

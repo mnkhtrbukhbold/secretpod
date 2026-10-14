@@ -1,0 +1,39 @@
+services:
+  secretpod:
+    image: ${SECRETPOD_IMAGE:?Run scripts/setup first}
+    environment:
+      SECRETPOD_PUBLIC_URL: ${SECRETPOD_PUBLIC_URL:?Set the public HTTPS URL}
+      SECRETPOD_API_URL: /api/
+      SECRETPOD_MASTER_KEY_FILE: /run/secrets/master_key
+      SECRETPOD_DATA_DIR: /data
+    secrets:
+      - master_key
+    volumes:
+      - vault-data:/data
+    restart: unless-stopped
+    stop_grace_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+  proxy:
+    image: caddy:2.11.2-alpine
+    environment:
+      SECRETPOD_SITE: ${SECRETPOD_PUBLIC_URL:?Set the public HTTPS URL}
+    ports:
+      - "${SECRETPOD_BIND:-0.0.0.0}:${SECRETPOD_HTTP_PORT:-80}:80"
+      - "${SECRETPOD_BIND:-0.0.0.0}:${SECRETPOD_HTTPS_PORT:-443}:${SECRETPOD_HTTPS_PORT:-443}"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      secretpod:
+        condition: service_healthy
+    restart: unless-stopped
+secrets:
+  master_key:
+    file: ./secrets/master_key
+volumes:
+  vault-data:
+  caddy-data:
+  caddy-config:

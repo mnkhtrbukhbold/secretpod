@@ -1,0 +1,9 @@
+{$SECRETPOD_SITE} {
+    encode zstd gzip
+    handle_path /api/* {
+        reverse_proxy secretpod:8080
+    }
+    handle {
+        reverse_proxy secretpod:8082
+    }
+}

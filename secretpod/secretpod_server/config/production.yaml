@@ -1,0 +1,25 @@
+# Production runs behind the TLS reverse proxy. Public URLs and allowed
+# browser origins are set from SECRETPOD_PUBLIC_URL at startup.
+apiServer:
+  port: 8080
+  publicHost: localhost
+  publicPort: 443
+  publicScheme: https
+
+# Insights remains internal and is not published by Compose.
+insightsServer:
+  port: 8081
+  publicHost: localhost
+  publicPort: 8081
+  publicScheme: http
+
+webServer:
+  port: 8082
+  publicHost: localhost
+  publicPort: 443
+  publicScheme: https
+
+maxRequestSize: 524288
+sessionLogs:
+  consoleEnabled: false
+  persistentEnabled: false

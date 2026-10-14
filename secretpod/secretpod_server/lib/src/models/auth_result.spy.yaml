@@ -1,0 +1,4 @@
+class: AuthResult
+fields:
+  token: String
+  account: AccountView

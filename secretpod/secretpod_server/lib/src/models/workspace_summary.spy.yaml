@@ -1,0 +1,7 @@
+class: WorkspaceSummary
+fields:
+  secretCount: int
+  filteredSecretCount: int
+  memberCount: int
+  activityCount: int
+  projectCounts: Map<String, int>

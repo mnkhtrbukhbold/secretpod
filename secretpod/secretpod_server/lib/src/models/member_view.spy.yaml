@@ -1,0 +1,4 @@
+class: MemberView
+fields:
+  account: AccountView
+  role: String
