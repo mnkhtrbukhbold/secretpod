@@ -36,7 +36,7 @@ sh scripts/start.sh
 
 Open **http://localhost:8082** and create an account. The launcher handles setup and startup; SQLite is included.
 
-More: [development and testing](docs/development.md) · [building releases](docs/release.md).
+See the [development guide](docs/development.md) for main features and modules.
 
 ## Interactive demo
 

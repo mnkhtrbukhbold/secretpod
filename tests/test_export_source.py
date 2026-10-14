@@ -34,7 +34,7 @@ class ExportSourceTests(unittest.TestCase):
     def test_exports_build_inputs_and_excludes_sensitive_sentinels(self):
         public = [
             "README.md", "Dockerfile", ".dockerignore", ".gitignore", ".gitattributes", "compose.yaml",
-            "docs/development.md", "docs/self-hosting.md", "docs/release.md", "docs/demo.md",
+            "docs/development.md", "docs/self-hosting.md", "docs/demo.md",
             "deploy/demo.Dockerfile", "deploy/demo.Caddyfile",
             "secretpod/secretpod_flutter/lib/demo/demo_seed.dart",
             ".github/workflows/test.yaml", "scripts/start.ps1", "scripts/host.py",

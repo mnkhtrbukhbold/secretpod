@@ -14,7 +14,7 @@ import stat
 ROOT_FILES = {
     "README.md", "Dockerfile", ".dockerignore", ".gitignore", ".gitattributes", "compose.yaml",
     "LICENSE", "LICENSE.md", "NOTICE", "docs/development.md",
-    "docs/self-hosting.md", "docs/release.md", "docs/demo.md", "secretpod/pubspec.yaml",
+    "docs/self-hosting.md", "docs/demo.md", "secretpod/pubspec.yaml",
     "secretpod/pubspec.lock",
 }
 PACKAGE_FILES = {
