@@ -40,9 +40,11 @@ See the [development guide](docs/development.md) for main features and modules.
 
 ## Interactive demo
 
+[Try the live SecretPod demo](https://secretpod-production.up.railway.app).
+
 The repository includes a fictional demo database and a separate Flutter entrypoint.
 Demo edits stay in your browser until **Reset demo** or clearing site data. The
 normal application continues to use its encrypted server-side vault.
 
 See [the demo guide](docs/demo.md) for local use and Railway deployment from the
-`demo` branch. All sample credentials are deliberately nonfunctional.
+`codex/demo` branch. All sample credentials are deliberately nonfunctional.
