@@ -13,24 +13,31 @@
 		respond "ok" 200
 	}
 
-	# Flutter's executable filenames are stable across releases.
-	@runtime path /index.html /flutter.js /flutter_bootstrap.js /main.dart.js /flutter_service_worker.js /version.json /manifest.json
-	handle @runtime {
+	@uncached path /flutter_service_worker.js /version.json
+	handle @uncached {
 		header Cache-Control "no-store"
+		file_server
+	}
+
+	# Filenames are stable: browsers revalidate; Railway caches for one hour.
+	# Configure Railway's CDN to purge ALL files after successful deployments.
+	@runtime path /flutter.js /flutter_bootstrap.js /main.dart.js /manifest.json
+	handle @runtime {
+		header Cache-Control "public, max-age=0, s-maxage=3600, must-revalidate"
 		file_server
 	}
 
 	@assets path /assets/* /canvaskit/* /icons/* /favicon.png /secretpod.svg
 	handle @assets {
-		header Cache-Control "public, max-age=3600, must-revalidate"
+		header Cache-Control "public, max-age=0, s-maxage=3600, must-revalidate"
 		file_server
 	}
 
 	handle {
-		# Apply headers after the rewrite so deep links cannot cache index.html.
+		# Deep links use the same short edge lifetime as the app shell.
 		route {
 			try_files {path} /index.html
-			header Cache-Control "no-store"
+			header Cache-Control "public, max-age=0, s-maxage=60, must-revalidate"
 			file_server
 		}
 	}

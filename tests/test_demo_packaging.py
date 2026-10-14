@@ -93,22 +93,36 @@ class DemoPackagingTests(unittest.TestCase):
                     self.assertEqual(response.read(), b"ok")
                     self.assertEqual(response.headers["Cache-Control"], "no-store")
 
-    def test_index_and_deep_links_get_uncached_app_shell(self):
+    def test_app_shell_is_cached_briefly_at_edge_and_revalidated_by_browsers(self):
         for url in self.urls:
             for path in ("/", "/index.html", "/workspace/projects?sort=name"):
                 with self.subTest(url=url, path=path):
                     with urlopen(url + path, timeout=3) as response:
                         self.assertEqual(response.status, 200)
                         self.assertIn(b"Synthetic demo fixture", response.read())
-                        self.assertEqual(response.headers["Cache-Control"], "no-store")
+                        self.assertEqual(
+                            response.headers["Cache-Control"],
+                            "public, max-age=0, s-maxage=60, must-revalidate",
+                        )
                         self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
 
-    def test_runtime_files_are_not_cached(self):
+    def test_runtime_files_are_edge_cacheable_but_require_browser_revalidation(self):
         for url in self.urls:
             for path in (
                 "/flutter.js", "/flutter_bootstrap.js", "/main.dart.js",
-                "/flutter_service_worker.js", "/version.json", "/manifest.json",
+                "/manifest.json",
             ):
+                with self.subTest(url=url, path=path):
+                    with urlopen(url + path, timeout=3) as response:
+                        self.assertEqual(response.status, 200)
+                        self.assertEqual(
+                            response.headers["Cache-Control"],
+                            "public, max-age=0, s-maxage=3600, must-revalidate",
+                        )
+
+    def test_service_worker_and_version_metadata_are_never_cached(self):
+        for url in self.urls:
+            for path in ("/flutter_service_worker.js", "/version.json"):
                 with self.subTest(url=url, path=path):
                     with urlopen(url + path, timeout=3) as response:
                         self.assertEqual(response.status, 200)
@@ -122,7 +136,7 @@ class DemoPackagingTests(unittest.TestCase):
                         self.assertEqual(response.status, 200)
                         self.assertEqual(
                             response.headers["Cache-Control"],
-                            "public, max-age=3600, must-revalidate",
+                            "public, max-age=0, s-maxage=3600, must-revalidate",
                         )
 
     def test_missing_asset_is_404_instead_of_html(self):
