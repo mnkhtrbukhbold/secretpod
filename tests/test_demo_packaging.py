@@ -65,7 +65,8 @@ class DemoPackagingTests(unittest.TestCase):
                 try:
                     with urlopen(url + "/", timeout=2):
                         break
-                except (URLError, TimeoutError):
+                except (URLError, TimeoutError, ConnectionError):
+                    # Docker can accept a connection before Caddy is ready.
                     if time.monotonic() >= deadline:
                         logs = cls.docker("logs", container)
                         raise AssertionError(f"Caddy did not start: {logs}")
