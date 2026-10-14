@@ -1,4 +1,4 @@
-# SecretPod
+# <img src="secretpod/secretpod_flutter/web/secretpod.svg" alt="SecretPod logo" width="36" height="36"> SecretPod
 
 A self-hostable secrets manager for developers and small teams, built with Flutter and Serverpod.
 
