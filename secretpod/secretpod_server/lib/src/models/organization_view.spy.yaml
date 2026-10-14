@@ -4,3 +4,8 @@ fields:
   name: String
   role: String
   createdAt: DateTime
+  readProjects: List<String>?
+  writeProjects: List<String>?
+  deniedReadProjects: List<String>?
+  deniedWriteProjects: List<String>?
+  canCreateProjects: bool?

@@ -5,6 +5,7 @@ import '../widgets/action_dialog.dart';
 import '../widgets/common.dart';
 import '../widgets/dropdown_field.dart';
 import '../widgets/secret_activity.dart';
+import '../widgets/activity_filters.dart';
 import '../widgets/pagination_controls.dart';
 import '../widgets/list_table.dart';
 import 'secret_dialogs.dart';
@@ -12,7 +13,9 @@ import 'invitation_dialogs.dart';
 import 'invitations_screen.dart';
 import 'profile_settings_screen.dart';
 import 'member_removal_dialog.dart';
-import 'projects_screen.dart';
+import 'member_access_dialog.dart';
+import '../widgets/member_access_fields.dart';
+import 'projects_dialog.dart';
 
 class WorkspaceScreen extends StatefulWidget {
   const WorkspaceScreen({
@@ -32,7 +35,12 @@ class WorkspaceScreen extends StatefulWidget {
 
 class _WorkspaceScreenState extends State<WorkspaceScreen> {
   int get _page => widget.page;
-  void _navigate(int page) => widget.onNavigate(page);
+  bool _openInvitationPreferences = false;
+  void _navigate(int page, {bool invitationPreferences = false}) {
+    _openInvitationPreferences = invitationPreferences;
+    widget.onNavigate(page);
+  }
+
   String get _query => c.secretQuery;
   set _query(String value) => c.secretQuery = value;
   String get _environment => c.secretEnvironment ?? 'All environments';
@@ -147,7 +155,23 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     if (changed == true) await c.refresh();
   }
 
-  Future<void> _removeMember(MemberView member) async {
+  Future<void> _editMemberAccess(MemberView member) async {
+    final orgId = c.organization!.id;
+    await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => MemberAccessDialog(
+        controller: c,
+        organizationId: orgId,
+        member: member,
+      ),
+    );
+  }
+
+  Future<void> _removeMember(
+    MemberView member, {
+    MemberAccessAction action = MemberAccessAction.remove,
+  }) async {
     final orgId = c.organization!.id;
     final changed = await showDialog<bool>(
       context: context,
@@ -156,6 +180,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         controller: c,
         organizationId: orgId,
         member: member,
+        action: action,
       ),
     );
     if (changed == true && mounted && c.organization?.id == orgId) {
@@ -207,8 +232,9 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                                   ErrorNotice(c.sessionStorageWarning!),
                                   const SizedBox(height: 24),
                                 ],
-                                if (c.pageSizeStorageWarning != null) ...[
-                                  ErrorNotice(c.pageSizeStorageWarning!),
+                                if (c.listPreferencesStorageWarning !=
+                                    null) ...[
+                                  ErrorNotice(c.listPreferencesStorageWarning!),
                                   const SizedBox(height: 16),
                                 ],
                                 if (c.error != null) ...[
@@ -218,13 +244,18 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                                 if (_page == 3)
                                   InvitationsScreen(
                                     controller: c,
-                                    onOpenSettings: () => _navigate(4),
+                                    onOpenSettings: () => _navigate(
+                                      4,
+                                      invitationPreferences: true,
+                                    ),
                                   )
                                 else if (_page == 4)
                                   ProfileSettingsScreen(
                                     key: ValueKey(c.account!.id),
                                     controller: c,
                                     onSignOut: _logout,
+                                    openInvitationPreferences:
+                                        _openInvitationPreferences,
                                   )
                                 else if (c.organization == null)
                                   _onboarding()
@@ -283,7 +314,16 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(padding: EdgeInsets.only(left: 10), child: Brand()),
+        TextButton(
+          onPressed: () => _navigate(0),
+          style: TextButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(13),
+            ),
+          ),
+          child: const Tooltip(message: 'Home', child: Brand()),
+        ),
         const SizedBox(height: 44),
         Padding(
           padding: EdgeInsets.only(left: 18, bottom: 16),
@@ -753,17 +793,17 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
                       ),
                     ),
                     const SizedBox(height: 18),
-                    if (_project != null)
-                      Padding(
-                        padding: const EdgeInsets.only(bottom: 12),
-                        child: InputChip(
-                          label: Text('Project: $_project'),
-                          onDeleted: () {
-                            setState(() => _project = null);
-                            _applyFilters();
-                          },
-                        ),
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: ProjectFilterButton(
+                        project: _project,
+                        onChoose: _showProjects,
+                        onClear: () {
+                          setState(() => _project = null);
+                          _applyFilters();
+                        },
                       ),
+                    ),
                     Wrap(
                       spacing: 8,
                       runSpacing: 8,
@@ -969,14 +1009,20 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
 
   Future<void> _showProjects() async {
     final organizationId = c.organization!.id;
-    final project = await Navigator.of(context).push<String>(
-      MaterialPageRoute(
-        builder: (_) =>
-            ProjectsScreen(controller: c, organizationId: organizationId),
-      ),
+    final accountId = c.account?.id;
+    final token = c.auth.token;
+    final project = await showDialog<String>(
+      context: context,
+      builder: (_) =>
+          ProjectsDialog(controller: c, organizationId: organizationId),
     );
-    if (mounted && project != null && c.organization?.id == organizationId) {
-      _showSecrets(project);
+    if (mounted &&
+        project != null &&
+        c.organization?.id == organizationId &&
+        c.account?.id == accountId &&
+        c.auth.token == token) {
+      setState(() => _project = project.isEmpty ? null : project);
+      _applyFilters();
     }
   }
 
@@ -1092,30 +1138,44 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     ListTableColumn('TIME', flex: 2),
   ];
 
-  Widget _activity() => ListTable(
-    columns: _activityColumns,
-    empty: c.activity.isEmpty
-        ? const EmptyState(
-            icon: Icons.history,
-            title: 'Nothing to report yet',
-            subtitle: 'Changes and secret reveals will appear here.',
-          )
-        : null,
-    rowsBuilder: (wide) => [
-      for (final event in c.activity) _activityRow(event, wide),
+  Widget _activity() => Column(
+    crossAxisAlignment: CrossAxisAlignment.stretch,
+    children: [
+      ActivityFilters(controller: c),
+      const SizedBox(height: 16),
+      ListTable(
+        columns: _activityColumns,
+        empty: c.activity.isEmpty
+            ? EmptyState(
+                icon: Icons.history,
+                title: c.hasActivityFilters
+                    ? 'No matching activity'
+                    : 'Nothing to report yet',
+                subtitle: c.hasActivityFilters
+                    ? 'Change or clear the filters to see more activity.'
+                    : 'Changes and secret reveals will appear here.',
+              )
+            : null,
+        rowsBuilder: (wide) => [
+          for (final event in c.activity) _activityRow(event, wide),
+        ],
+        footer: c.summary == null
+            ? null
+            : _pagination(1, c.filteredActivityCount),
+      ),
     ],
-    footer: c.summary == null ? null : _pagination(1, c.activityCount),
   );
 
   Widget _activityRow(AuditView event, bool wide) {
+    final colors = activityColors(context, event.action);
     final actor = Row(
       children: [
         CircleAvatar(
-          backgroundColor: context.colors.blueContainer,
+          backgroundColor: colors.background,
           child: Icon(
             activityIcon(event.action),
             size: 20,
-            color: context.colors.blue,
+            color: colors.foreground,
           ),
         ),
         const SizedBox(width: 12),
@@ -1127,7 +1187,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         ),
       ],
     );
-    final action = Text(event.action, style: const TextStyle(fontSize: 13));
+    final action = ActivityBadge(event.action);
     final target = Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1173,7 +1233,7 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     ListTableColumn('NAME', flex: 3),
     ListTableColumn('EMAIL', flex: 4),
     ListTableColumn('ROLE', flex: 2),
-    ListTableColumn('ACTIONS', width: 80),
+    ListTableColumn('ACTIONS', width: 160),
   ];
 
   Widget _memberRow(MemberView member, bool wide) {
@@ -1207,9 +1267,31 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           color: context.colors.canvas,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Text(
-          member.role,
-          style: TextStyle(fontSize: 11, color: context.colors.muted),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              member.role,
+              style: TextStyle(fontSize: 11, color: context.colors.muted),
+            ),
+            if (member.accessDisabled)
+              Text(
+                'Access disabled',
+                style: TextStyle(fontSize: 11, color: context.colors.danger),
+              ),
+            if (member.role != 'owner')
+              Text(
+                accessDescription(
+                  member.role,
+                  member.readProjects,
+                  member.writeProjects,
+                  deniedReadProjects: member.deniedReadProjects,
+                  deniedWriteProjects: member.deniedWriteProjects,
+                  canCreateProjects: member.canCreateProjects,
+                ),
+                style: TextStyle(fontSize: 11, color: context.colors.muted),
+              ),
+          ],
         ),
       ),
     );
@@ -1217,13 +1299,38 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
         c.isOwner &&
             member.role != 'owner' &&
             member.account.id != c.account?.id
-        ? IconButton(
-            tooltip: 'Remove ${member.account.name}',
-            onPressed: () => _removeMember(member),
-            icon: Icon(
-              Icons.person_remove_outlined,
-              color: context.colors.danger,
-            ),
+        ? Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Edit access for ${member.account.name}',
+                onPressed: () => _editMemberAccess(member),
+                icon: const Icon(Icons.manage_accounts_outlined),
+              ),
+              IconButton(
+                tooltip:
+                    '${member.accessDisabled ? 'Enable' : 'Disable'} access for ${member.account.name}',
+                onPressed: () => _removeMember(
+                  member,
+                  action: member.accessDisabled
+                      ? MemberAccessAction.enable
+                      : MemberAccessAction.disable,
+                ),
+                icon: Icon(
+                  member.accessDisabled
+                      ? Icons.lock_open_outlined
+                      : Icons.block_outlined,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Remove ${member.account.name}',
+                onPressed: () => _removeMember(member),
+                icon: Icon(
+                  Icons.person_remove_outlined,
+                  color: context.colors.danger,
+                ),
+              ),
+            ],
           )
         : const SizedBox.shrink();
     return ListTableRow(
@@ -1255,7 +1362,38 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
     );
   }
 
-  Widget _members() => Column(
+  Widget _members() {
+    if (!c.isOwner) return _memberList();
+    return DefaultTabController(
+      key: ValueKey(c.organization!.id),
+      length: 2,
+      child: Builder(
+        builder: (context) {
+          final tabs = DefaultTabController.of(context);
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const TabBar(
+                tabs: [
+                  Tab(text: 'Members'),
+                  Tab(text: 'Invitations'),
+                ],
+              ),
+              const SizedBox(height: 24),
+              AnimatedBuilder(
+                animation: tabs,
+                builder: (context, _) => tabs.index == 0
+                    ? _memberList()
+                    : OutgoingInvitations(controller: c),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _memberList() => Column(
     crossAxisAlignment: CrossAxisAlignment.start,
     children: [
       ListTable(
@@ -1274,7 +1412,6 @@ class _WorkspaceScreenState extends State<WorkspaceScreen> {
           height: 1.6,
         ),
       ),
-      if (c.isOwner) OutgoingInvitations(controller: c),
     ],
   );
 }

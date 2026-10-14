@@ -7,6 +7,16 @@ import 'package:secretpod_client/secretpod_client.dart';
 import 'package:secretpod_flutter/state/vault_controller.dart';
 import 'package:secretpod_flutter/state/page_size_store.dart';
 import 'package:secretpod_flutter/state/page_size_store_memory.dart';
+import 'package:secretpod_flutter/state/list_state_store.dart';
+import 'package:secretpod_flutter/state/list_state_store_memory.dart';
+
+class UnavailableListStateStore implements ListStateStore {
+  @override
+  String? read(String accountId, String key) => throw StateError('Unavailable');
+  @override
+  void write(String accountId, String key, String value) =>
+      throw StateError('Unavailable');
+}
 
 class PagingFixture {
   final account = AccountView(id: 'a', name: 'Alex', email: 'a@example.test');
@@ -27,10 +37,14 @@ class PagingFixture {
   bool insertInvitationBetweenPages = false;
   int count = 61;
 
-  PagingFixture({PageSizeStore? pageSizeStore}) {
+  PagingFixture({
+    PageSizeStore? pageSizeStore,
+    ListStateStore? listStateStore,
+  }) {
     controller = VaultController(
       'http://localhost/',
       pageSizeStore: pageSizeStore,
+      listStateStore: listStateStore,
       api: Client(
         'http://localhost/',
         httpClientOverride: MockClient((request) async {
@@ -60,7 +74,9 @@ class PagingFixture {
                     (s) =>
                         s.name.contains(query) &&
                         (args['project'] == null ||
-                            args['project'] == s.project),
+                            args['project'] == s.project) &&
+                        (args['environment'] == null ||
+                            args['environment'] == s.environment),
                   )
                   .toList();
           Object result;
@@ -152,6 +168,291 @@ void main() {
     controller = fixture.controller;
   });
   tearDown(() => controller.dispose());
+
+  test(
+    'unavailable browser preferences do not prevent loading or paging',
+    () async {
+      final instance = PagingFixture(
+        listStateStore: UnavailableListStateStore(),
+      );
+      addTearDown(instance.controller.dispose);
+      await instance.controller.refresh();
+      expect(instance.controller.error, isNull);
+      expect(instance.controller.secrets, hasLength(10));
+      expect(instance.controller.listPreferencesStorageWarning, isNotNull);
+      await instance.controller.changePage(0, 2);
+      expect(instance.controller.pages[0], 2);
+      expect(instance.controller.preferredListState('secrets').page, 2);
+    },
+  );
+
+  test(
+    'clearing filters and changing page size save page one across reload',
+    () async {
+      final states = MemoryListStateStore();
+      final sizes = MemoryPageSizeStore();
+      final first = PagingFixture(listStateStore: states, pageSizeStore: sizes);
+      await first.controller.refresh();
+      await first.controller.filterSecrets(
+        query: 'Secret',
+        project: 'Other',
+        environment: 'Production',
+      );
+      await first.controller.changePage(0, 2);
+      await first.controller.filterSecrets();
+      await first.controller.changePage(0, 1);
+      await first.controller.changePage(0, 0, pageSize: 25);
+      first.controller.dispose();
+      final second = PagingFixture(
+        listStateStore: states,
+        pageSizeStore: sizes,
+      );
+      addTearDown(second.controller.dispose);
+      await second.controller.refresh();
+      expect(second.controller.pages[0], 0);
+      expect(second.controller.pageSizes[0], 25);
+      expect(second.controller.secretQuery, isEmpty);
+      expect(second.controller.secretProject, isNull);
+      expect(second.controller.secretEnvironment, isNull);
+      expect(second.controller.secrets, hasLength(25));
+    },
+  );
+
+  test(
+    'filters chosen while switching organizations override saved filters',
+    () async {
+      await controller.refresh();
+      await controller.selectOrganization(fixture.organizations[1]);
+      await controller.filterSecrets(query: 'Secret 1');
+      await controller.selectOrganization(fixture.organizations[0]);
+      final switching = controller.selectOrganization(fixture.organizations[1]);
+      final filtering = controller.filterSecrets(query: 'Secret 60');
+      await Future.wait([switching, filtering]);
+      expect(controller.secretQuery, 'Secret 60');
+      expect(controller.secrets.single.name, 'Secret 60');
+      expect(
+        controller.preferredListState('secrets').filters['query'],
+        'Secret 60',
+      );
+    },
+  );
+
+  test(
+    'app recreation restores organization, all pages and secret filters before requests',
+    () async {
+      final states = MemoryListStateStore();
+      final sizes = MemoryPageSizeStore();
+      final first = PagingFixture(pageSizeStore: sizes, listStateStore: states);
+      await first.controller.refresh();
+      await first.controller.selectOrganization(first.organizations[2]);
+      await first.controller.filterSecrets(
+        query: 'Secret',
+        project: 'Other',
+        environment: 'Production',
+      );
+      await first.controller.changePage(0, 1, pageSize: 25);
+      await first.controller.changePage(1, 3);
+      await first.controller.changePage(2, 2);
+      first.controller.rememberInvitationPage('received-invitations', 2);
+      first.controller.rememberInvitationPage('sent-invitations', 1);
+      first.controller.dispose();
+      final second = PagingFixture(
+        pageSizeStore: sizes,
+        listStateStore: states,
+      );
+      addTearDown(second.controller.dispose);
+      await second.controller.refresh();
+      expect(second.controller.organization?.id, 'o2');
+      expect(second.controller.pages, [1, 3, 2]);
+      expect(second.controller.pageSizes, [25, 10, 10]);
+      expect(second.controller.secretQuery, 'Secret');
+      expect(second.controller.secretProject, 'Other');
+      expect(second.controller.secretEnvironment, 'Production');
+      expect(second.controller.secrets.first.id, 'o2-s55');
+      expect(
+        second.controller.preferredListState('received-invitations').page,
+        2,
+      );
+      expect(second.controller.preferredListState('sent-invitations').page, 1);
+      final summary = second.requests.firstWhere(
+        (r) => r['method'] == 'summary',
+      );
+      expect(summary['query'], 'Secret');
+      expect(summary['project'], 'Other');
+      expect(summary['environment'], 'Production');
+      for (final entry in {
+        'listSecrets': 25,
+        'activity': 30,
+        'members': 20,
+      }.entries) {
+        expect(
+          second.requests.firstWhere((r) => r['method'] == entry.key)['offset'],
+          entry.value,
+        );
+      }
+    },
+  );
+
+  test(
+    'saved pages clamp after deletion and inaccessible organization falls back',
+    () async {
+      final states = MemoryListStateStore()
+        ..write('a', ListStateStore.organizationKey, 'removed')
+        ..write(
+          'a',
+          ListStateStore.listKey('secrets', 'removed'),
+          const ListViewState(page: 4, filters: {'query': 'missing'}).encode(),
+        );
+      for (final list in [
+        'secrets',
+        'activity',
+        'members',
+        'sent-invitations',
+      ]) {
+        states.write(
+          'a',
+          ListStateStore.listKey(list, 'o0'),
+          const ListViewState(page: 99).encode(),
+        );
+      }
+      states.write(
+        'a',
+        ListStateStore.listKey('received-invitations', null),
+        const ListViewState(page: 99).encode(),
+      );
+      final instance = PagingFixture(listStateStore: states);
+      addTearDown(instance.controller.dispose);
+      await instance.controller.refresh();
+      expect(instance.controller.organization?.id, 'o0');
+      expect(instance.controller.pages, [6, 6, 6]);
+      expect(instance.controller.secretQuery, isEmpty);
+      expect(
+        instance.controller.preferredListState('sent-invitations').page,
+        3,
+      );
+      expect(
+        instance.controller.preferredListState('received-invitations').page,
+        3,
+      );
+      instance.count = 0;
+      await instance.controller.refresh();
+      expect(instance.controller.pages, [0, 0, 0]);
+      expect(
+        ListViewState.decode(
+          states.read('a', ListStateStore.listKey('secrets', 'o0')),
+        ).page,
+        0,
+      );
+    },
+  );
+
+  test(
+    'failed and stale requests cannot overwrite confirmed saved filters or pages',
+    () async {
+      final states = MemoryListStateStore();
+      final instance = PagingFixture(listStateStore: states);
+      final c = instance.controller;
+      addTearDown(c.dispose);
+      await c.refresh();
+      await c.changePage(0, 2);
+      final key = ListStateStore.listKey('secrets', 'o0');
+      final confirmed = states.read('a', key);
+      instance.fail = true;
+      await c.filterSecrets(query: 'Secret 60');
+      expect(states.read('a', key), confirmed);
+      instance.fail = false;
+      instance.gate = Completer<void>();
+      instance.started = Completer<void>();
+      instance.delayedQuery = 'Secret 1';
+      final pending = c.filterSecrets(query: 'Secret 1');
+      await instance.started!.future;
+      await c.filterSecrets(query: 'Secret 60');
+      instance.gate!.complete();
+      await pending;
+      final saved = ListViewState.decode(states.read('a', key));
+      expect(saved.page, 0);
+      expect(saved.filters['query'], 'Secret 60');
+      instance.gate = Completer<void>();
+      instance.started = Completer<void>();
+      instance.delayedQuery = 'Secret';
+      final loggingOut = c.filterSecrets(query: 'Secret');
+      await instance.started!.future;
+      await c.logout();
+      instance.gate!.complete();
+      await loggingOut;
+      expect(
+        ListViewState.decode(states.read('a', key)).filters['query'],
+        'Secret 60',
+      );
+      expect(c.preferredListState('secrets').filters, isEmpty);
+    },
+  );
+
+  test(
+    'list preferences remain separate by account and invitation organization',
+    () async {
+      final states = MemoryListStateStore();
+      final instance = PagingFixture(listStateStore: states);
+      final c = instance.controller;
+      addTearDown(c.dispose);
+      await c.refresh();
+      c.rememberInvitationPage('received-invitations', 2);
+      c.rememberInvitationPage('sent-invitations', 1);
+      await c.selectOrganization(instance.organizations[1]);
+      expect(c.preferredListState('received-invitations').page, 2);
+      expect(c.preferredListState('sent-invitations').page, 0);
+      c.rememberInvitationPage('sent-invitations', 3);
+      await c.selectOrganization(instance.organizations[0]);
+      expect(c.preferredListState('sent-invitations').page, 1);
+      await c.logout();
+      c.account = instance.account.copyWith(id: 'other-account');
+      expect(c.preferredListState('received-invitations').page, 0);
+      expect(c.preferredListState('secrets').filters, isEmpty);
+    },
+  );
+
+  test(
+    'invalid stored list state safely defaults and preserves valid fields',
+    () {
+      for (final value in [
+        null,
+        '',
+        '{',
+        '[]',
+        'null',
+        '{"version":2,"page":4}',
+      ]) {
+        expect(ListViewState.decode(value).page, 0);
+        expect(ListViewState.decode(value).filters, isEmpty);
+      }
+      final state = ListViewState.decode(
+        '{"version":1,"page":-3,"filters":{"query":"Secret","project":123}}',
+      );
+      expect(state.page, 0);
+      expect(state.filters, {'query': 'Secret'});
+    },
+  );
+
+  test('returning to an organization restores its pages and filters', () async {
+    await controller.refresh();
+    await controller.filterSecrets(
+      query: 'Secret',
+      project: 'Other',
+      environment: 'Production',
+    );
+    await controller.changePage(0, 2);
+    await controller.changePage(1, 3);
+    await controller.changePage(2, 1);
+    await controller.selectOrganization(fixture.organizations[1]);
+    expect(controller.pages, [0, 0, 0]);
+    expect(controller.secretQuery, isEmpty);
+    await controller.selectOrganization(fixture.organizations[0]);
+    expect(controller.pages, [2, 3, 1]);
+    expect(controller.secretQuery, 'Secret');
+    expect(controller.secretProject, 'Other');
+    expect(controller.secretEnvironment, 'Production');
+    expect(controller.secrets.first.id, 'o0-s50');
+  });
 
   test(
     'organization fallback applies and saves the same requested size',

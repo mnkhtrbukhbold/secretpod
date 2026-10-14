@@ -95,6 +95,124 @@ The first install requires network access; later launches can reuse that cache.
 Do not include caches, `.env`, passwords files, data directories, or logs in a
 public source archive.
 
+## Projects
+
+The Projects card on the Secrets home page opens a project picker. Selecting a
+project adds it to the current search and environment filters. The project
+control above the secrets list reopens the picker; its clear button removes only
+the project filter. All projects restores the combined list.
+
+Owners and editors granted project creation permission can create projects in
+the picker. Names are trimmed, limited to 80 characters, and unique within the
+organization without regard to case. Empty projects persist across refreshes and
+restarts. Existing project labels on secrets remain available without rewriting
+those secrets. New secrets start in the selected project.
+
+## Repeated requests and cooldowns
+
+Sign-in/account creation and secret reveal controls wait two seconds after a
+request finishes before accepting another request. The controls show the time
+remaining; pressing Enter or clicking again before a screen rebuild cannot
+submit a duplicate. Hiding a revealed value remains immediate, and values still
+hide automatically after 30 seconds. Email and password length limits are also
+checked locally before submitting; passwords are never trimmed.
+
+The server shares one secret-access budget across reveal, credential reveal and
+copy requests: **10 requests per rolling 10 seconds and 60 per rolling minute
+per account**, across organizations, secrets, tabs and sessions. It reserves
+quota before queuing the secret transaction. Rejected requests return a retry
+time without decrypting a value or adding an activity event. Accepted requests
+retain their activity records. Copy confirmation remains independently retryable
+and idempotent after the access budget is exhausted.
+
+Authentication retains its **10 attempts per normalized email per 15 minutes**,
+**60 attempts per minute across the server**, and **four simultaneous password
+hashes**. Registration shares these budgets; profile password checks have their
+own account key and share the global budget. Successful sign-in no longer clears
+the email budget. Rejected attempts do not extend the waiting period or allocate
+new email buckets.
+
+These limits live in memory in the single server process and reset on restart.
+Secret-access tracking holds at most 4,096 active account budgets and refuses
+new budgets until an existing one expires when that capacity is reached.
+
+## Saved list preferences
+
+The browser remembers the page size and current page independently for Secrets,
+Members, Activity, received invitations and sent invitations. Page sizes are
+10 (default), 25, 50 and 100. Secrets search, project and environment filters and
+Activity date, project, action and user filters also restore after a reload.
+Changing filters or page size returns that list to its first page.
+
+Preferences are separate for each API server and account; organization lists
+also keep their own pages and filters per organization. The selected organization
+restores only if the account still has access. Deleted rows can move a saved page
+back to the last available page. Browser storage failures leave the lists usable
+and display a warning. Native targets currently use in-memory preferences.
+
+`PageSizeStore` retains existing size keys. `ListStateStore` stores versioned
+`ListViewState` objects with a page and filter map for reuse by future lists.
+These stores contain display settings, including search text, never list rows or
+decrypted secret values. Sign-out retains preferences for the same account.
+
+## Member roles and project access
+
+Owners can use **Members → Edit access** to change another member between Reader
+and Editor and select their readable and writable projects. The same controls
+are available when creating an invitation. Each access section shows every
+project with an individual checkbox. **Selected projects only** grants exactly
+the checked projects. **All projects, with exclusions** includes future projects
+and denies unchecked projects. Read and write choices are independent, but
+writing requires read access to the same project. Read-all access can be combined
+with writes limited to selected projects.
+
+**Can create projects** is a separate Editor permission. Enabling it converts
+both access sections to exclusions, preserves restrictions on existing projects,
+and grants read/write access to future projects, including projects the member
+creates. Unchecking it disables creation while retaining the displayed project
+permissions. Owner membership is protected from role changes.
+
+The server checks scopes on every secret operation and filters lists, counts,
+project choices and activity before pagination. Moving a secret requires write
+access to both its current and destination projects. Historical events without
+project evidence are visible only with all-project read access. Existing grants
+remain editable when a legacy project loses its last secret.
+
+SQLite schema 11 extends the schema 9 allow lists with `deniedReadProjects`,
+`deniedWriteProjects`, and `canCreateProjects` on memberships and invitations.
+Null allow lists include all projects except explicit denials; empty allow lists
+grant none. Missing creation flags preserve legacy behavior: only unrestricted
+Editors can create projects. Explicit flags distinguish all-project writers who
+cannot create projects. Creation checks also apply when saving a secret under a
+new project name. Deploy the regenerated API and rebuilt frontend together using
+the normal launcher.
+
+## Disabling member access
+
+Owners can choose **Disable access** on a member row to suspend organization
+access while retaining the membership, role, and project permissions. Disabled
+members stay visible to the owner with an **Access disabled** label and an
+**Enable access** action. Owners cannot disable themselves or another owner.
+Removing the membership remains a separate action.
+
+Disabling uses the same secret review as removal: existing, unexpired secrets
+linked to the member's recorded create, edit, reveal, and copy activity, sorted
+by type and name with project and environment shown. Deleted secrets are excluded. The owner
+selects which secrets to mark **Needs rotating**; the flags and suspension commit
+together. A changed review must be refreshed before confirming. Enabling access
+restores the saved permissions and leaves rotation flags unchanged.
+
+The server excludes disabled memberships from organization lists and rejects
+organization operations even with an existing login session. Other organizations
+and the member's personal account remain accessible. Refresh clears a revoked
+organization and its open secret dialogs, including when access is revoked
+between requests. Existing clients learn the change on their next refresh;
+there is no push notification or remote erasure of previously copied values.
+
+SQLite schema 10 adds a nullable membership access flag. Existing memberships
+remain enabled and the migration does not rewrite secret ciphertext. Deploy the
+regenerated backend and frontend together using the normal launcher.
+
 ## Isolated local instances
 
 Use a separate source checkout and separate data/key pair to test a fresh

@@ -54,6 +54,12 @@ const vaultTables = [
       'organizationId': 'TEXT',
       'accountId': 'TEXT',
       'role': 'TEXT',
+      'accessDisabled': 'INTEGER?',
+      'readProjects': 'TEXT?',
+      'writeProjects': 'TEXT?',
+      'deniedReadProjects': 'TEXT?',
+      'deniedWriteProjects': 'TEXT?',
+      'canCreateProjects': 'INTEGER?',
     },
     ['organizationId', 'accountId'],
     constraints: [
@@ -112,6 +118,7 @@ const vaultTables = [
       'actorId': 'TEXT?',
       'version': 'INTEGER?',
       'details': 'TEXT?',
+      'project': 'TEXT?',
     },
     ['id'],
     constraints: [
@@ -129,6 +136,11 @@ const vaultTables = [
       'recipientEmail': 'TEXT',
       'recipientName': 'TEXT',
       'role': 'TEXT',
+      'readProjects': 'TEXT?',
+      'writeProjects': 'TEXT?',
+      'deniedReadProjects': 'TEXT?',
+      'deniedWriteProjects': 'TEXT?',
+      'canCreateProjects': 'INTEGER?',
       'tokenDigest': 'TEXT',
       'status': 'TEXT',
       'createdAt': 'TEXT',
@@ -142,6 +154,14 @@ const vaultTables = [
       'UNIQUE ("tokenDigest")',
       'CHECK ("role" IN (\'reader\', \'editor\'))',
       'CHECK ("status" IN (\'pending\', \'accepted\', \'declined\', \'revoked\', \'blocked\', \'expired\'))',
+    ],
+  ),
+  VaultTable(
+    'projects',
+    {'organizationId': 'TEXT', 'name': 'TEXT'},
+    ['organizationId', 'name'],
+    constraints: [
+      'FOREIGN KEY ("organizationId") REFERENCES vault_organizations("id")',
     ],
   ),
 ];

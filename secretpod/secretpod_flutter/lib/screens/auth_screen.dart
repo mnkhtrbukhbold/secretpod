@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../state/vault_controller.dart';
 import '../widgets/common.dart';
@@ -16,8 +17,11 @@ class _AuthScreenState extends State<AuthScreen> {
       _name = TextEditingController();
   bool _register = false, _busy = false, _obscure = true;
   String? _error;
+  Timer? _cooldownTimer;
+  int _cooldownSeconds = 0;
   @override
   void dispose() {
+    _cooldownTimer?.cancel();
     _email.dispose();
     _password.dispose();
     _name.dispose();
@@ -25,7 +29,9 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   Future<void> _submit() async {
-    if (!_form.currentState!.validate() || _busy) return;
+    if (_busy || _cooldownSeconds > 0 || !_form.currentState!.validate()) {
+      return;
+    }
     setState(() {
       _busy = true;
       _error = null;
@@ -39,7 +45,16 @@ class _AuthScreenState extends State<AuthScreen> {
     } catch (e) {
       if (mounted) setState(() => _error = VaultController.describeError(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _cooldownSeconds = 2;
+        });
+        _cooldownTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+          setState(() => _cooldownSeconds--);
+          if (_cooldownSeconds == 0) timer.cancel();
+        });
+      }
     }
   }
 
@@ -189,9 +204,11 @@ class _AuthScreenState extends State<AuthScreen> {
                               ),
                               validator: (s) => (s?.trim().isEmpty ?? true)
                                   ? 'Enter your email.'
+                                  : s!.trim().length > 254
+                                  ? 'Use at most 254 characters.'
                                   : (!RegExp(
                                           r'^[^\s@]+@[^\s@]+\.[^\s@]+$',
-                                        ).hasMatch(s!.trim())
+                                        ).hasMatch(s.trim())
                                         ? 'Enter a valid email.'
                                         : null),
                             ),
@@ -222,7 +239,9 @@ class _AuthScreenState extends State<AuthScreen> {
                               onFieldSubmitted: (_) => _submit(),
                               validator: (s) => (s?.isEmpty ?? true)
                                   ? 'Enter your password.'
-                                  : (_register && s!.length < 12
+                                  : s!.length > 256
+                                  ? 'Use at most 256 characters.'
+                                  : (_register && s.length < 12
                                         ? 'Use at least 12 characters.'
                                         : null),
                             ),
@@ -241,7 +260,9 @@ class _AuthScreenState extends State<AuthScreen> {
                             SizedBox(
                               width: double.infinity,
                               child: FilledButton(
-                                onPressed: _busy ? null : _submit,
+                                onPressed: _busy || _cooldownSeconds > 0
+                                    ? null
+                                    : _submit,
                                 child: _busy
                                     ? SizedBox(
                                         height: 20,
@@ -252,7 +273,9 @@ class _AuthScreenState extends State<AuthScreen> {
                                         ),
                                       )
                                     : Text(
-                                        _register
+                                        _cooldownSeconds > 0
+                                            ? 'Try again in ${_cooldownSeconds}s'
+                                            : _register
                                             ? 'Create account'
                                             : 'Sign in',
                                       ),

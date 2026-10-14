@@ -4,6 +4,7 @@ import 'package:secretpod_client/secretpod_client.dart';
 import 'session_store.dart';
 import 'pagination.dart';
 import 'page_size_store.dart';
+import 'list_state_store.dart';
 
 class MemoryAuth implements ClientAuthKeyProvider {
   String? token;
@@ -18,8 +19,10 @@ class VaultController extends ChangeNotifier {
     Client? api,
     SessionStore? sessionStore,
     PageSizeStore? pageSizeStore,
+    ListStateStore? listStateStore,
   }) : _sessionStore = sessionStore ?? createSessionStore(url),
-       _pageSizeStore = pageSizeStore ?? createPageSizeStore(url) {
+       _pageSizeStore = pageSizeStore ?? createPageSizeStore(url),
+       _listStateStore = listStateStore ?? createListStateStore(url) {
     client = (api ?? Client(url))..authKeyProvider = auth;
     _sessionChanges = _sessionStore.changes.listen((_) {
       unawaited(synchronizeSession(storageChanged: true));
@@ -28,6 +31,13 @@ class VaultController extends ChangeNotifier {
   final auth = MemoryAuth();
   final SessionStore _sessionStore;
   final PageSizeStore _pageSizeStore;
+  final ListStateStore _listStateStore;
+  final _savedListStates = <String, ListViewState>{};
+  String? _listStateAccountId, _preferredOrganizationId;
+  (String, String)? _listStateContext;
+  String? listStateStorageWarning;
+  String? get listPreferencesStorageWarning =>
+      pageSizeStorageWarning ?? listStateStorageWarning;
   final _savedPageSizes = <String, int>{};
   String? _pageSizeAccountId, pageSizeStorageWarning;
   late final StreamSubscription<void> _sessionChanges;
@@ -41,6 +51,16 @@ class VaultController extends ChangeNotifier {
   final pageSizes = List.filled(3, PaginationSettings.defaultPageSize);
   String secretQuery = '';
   String? secretProject, secretEnvironment;
+  DateTime? activityFrom, activityUntil;
+  String? activityProject, activityAction, activityUser;
+  bool get hasActivityFilters =>
+      activityFrom != null ||
+      activityUntil != null ||
+      activityProject != null ||
+      activityAction != null ||
+      activityUser != null;
+  int get filteredActivityCount =>
+      summary?.filteredActivityCount ?? activityCount;
   int get secretCount => summary?.secretCount ?? secrets.length;
   int get memberCount => summary?.memberCount ?? members.length;
   int get activityCount => summary?.activityCount ?? activity.length;
@@ -55,6 +75,10 @@ class VaultController extends ChangeNotifier {
           .length;
   List<String> get projects {
     final names = <String, String>{'default': 'Default'};
+    names.addAll(_createdProjects[organization?.id] ?? {});
+    for (final name in organization?.readProjects ?? <String>[]) {
+      names.putIfAbsent(name.toLowerCase(), () => name);
+    }
     for (final name in summary?.projectCounts.keys ?? <String>[]) {
       names.putIfAbsent(name.toLowerCase(), () => name);
     }
@@ -63,11 +87,13 @@ class VaultController extends ChangeNotifier {
     }
     final others =
         names.entries
-            .where((entry) => entry.key != 'default')
+            .where(
+              (entry) => entry.key != 'default' && canReadProject(entry.value),
+            )
             .map((entry) => entry.value)
             .toList()
           ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return ['Default', ...others];
+    return [if (canReadProject('Default')) 'Default', ...others];
   }
 
   List<AuditView> activity = [];
@@ -85,9 +111,95 @@ class VaultController extends ChangeNotifier {
   int _profileRevision = 0;
   Future<void>? _profileWrites;
   final _organizationRevisions = <String, int>{};
+  // Confirmed creations outlive stale summary responses and stay organization scoped.
+  final _createdProjects = <String, Map<String, String>>{};
   Future<void>? _organizationWrites;
-  bool get canEdit => organization != null && organization!.role != 'reader';
+  bool get canEdit =>
+      isOwner ||
+      (organization?.role == 'editor' &&
+          (canCreateProject || projects.any(canWriteProject)));
+  bool canWriteProject(String project) =>
+      isOwner ||
+      (organization?.role == 'editor' &&
+          canReadProject(project) &&
+          !(organization!.deniedWriteProjects ?? <String>[]).any(
+            (p) => p.toLowerCase() == project.toLowerCase(),
+          ) &&
+          (organization!.writeProjects == null ||
+              organization!.writeProjects!.any(
+                (p) => p.toLowerCase() == project.toLowerCase(),
+              )));
+  List<String> get writableProjects => projects.where(canWriteProject).toList();
+  Future<void>? _memberWrites;
   bool get isOwner => organization?.role == 'owner';
+  bool get canCreateProject =>
+      isOwner ||
+      (organization?.role == 'editor' &&
+          (organization?.canCreateProjects ?? true) &&
+          organization?.readProjects == null &&
+          organization?.writeProjects == null);
+  bool canReadProject(String name) =>
+      organization != null &&
+      (isOwner ||
+          (!(organization!.deniedReadProjects ?? <String>[]).any(
+                (project) => project.toLowerCase() == name.toLowerCase(),
+              ) &&
+              (organization!.readProjects == null ||
+                  organization!.readProjects!.any(
+                    (project) => project.toLowerCase() == name.toLowerCase(),
+                  ))));
+
+  Future<MemberView> updateMemberAccess(
+    String organizationId,
+    String accountId,
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) {
+    final actor = account?.id, token = auth.token;
+    final previous = _memberWrites;
+    bool current() =>
+        !_disposed &&
+        account?.id == actor &&
+        auth.token == token &&
+        organization?.id == organizationId &&
+        isOwner;
+    Future<MemberView> perform() async {
+      await previous;
+      if (!current()) {
+        throw StateError('The active account or organization changed.');
+      }
+      final updated = await client.vault.updateMemberAccess(
+        organizationId,
+        accountId,
+        role,
+        readProjects: readProjects,
+        writeProjects: writeProjects,
+        deniedReadProjects: deniedReadProjects,
+        deniedWriteProjects: deniedWriteProjects,
+        canCreateProjects: canCreateProjects,
+      );
+      if (current()) {
+        _generation++;
+        loading = false;
+        members = members
+            .map((m) => m.account.id == accountId ? updated : m)
+            .toList();
+        notifyListeners();
+      }
+      return updated;
+    }
+
+    final result = perform();
+    _memberWrites = result.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {},
+    );
+    return result;
+  }
 
   Future<void> removeMember(
     String organizationId,
@@ -114,12 +226,7 @@ class VaultController extends ChangeNotifier {
     loading = false;
     final wasVisible = members.any((m) => m.account.id == accountId);
     members = members.where((m) => m.account.id != accountId).toList();
-    final selected = rotateSecretIds.toSet();
-    secrets = secrets
-        .map(
-          (s) => selected.contains(s.id) ? s.copyWith(needsRotation: true) : s,
-        )
-        .toList();
+    _publishRotationFlags(rotateSecretIds);
     // A refresh may already have published the removal while its HTTP response
     // was delayed. Only subtract when removing a member still in this snapshot.
     if (wasVisible && summary != null) {
@@ -129,6 +236,63 @@ class VaultController extends ChangeNotifier {
       if (pages[2] * pageSizes[2] >= count && pages[2] > 0) pages[2]--;
     }
     notifyListeners();
+  }
+
+  Future<MemberView> setMemberEnabled(
+    String organizationId,
+    String accountId,
+    bool enabled,
+    List<String> reviewedSecretIds,
+    List<String> rotateSecretIds,
+  ) {
+    final actor = account?.id, token = auth.token;
+    final previous = _memberWrites;
+    bool current() =>
+        !_disposed &&
+        account?.id == actor &&
+        auth.token == token &&
+        organization?.id == organizationId &&
+        isOwner;
+    Future<MemberView> perform() async {
+      await previous;
+      if (!current()) {
+        throw StateError('The active account or organization changed.');
+      }
+      final updated = await client.vault.setMemberEnabled(
+        organizationId,
+        accountId,
+        enabled,
+        reviewedSecretIds,
+        rotateSecretIds,
+        utcOffsetMinutes: DateTime.now().timeZoneOffset.inMinutes,
+      );
+      if (current()) {
+        _generation++;
+        loading = false;
+        members = members
+            .map((m) => m.account.id == accountId ? updated : m)
+            .toList();
+        _publishRotationFlags(rotateSecretIds);
+        notifyListeners();
+      }
+      return updated;
+    }
+
+    final result = perform();
+    _memberWrites = result.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stack) {},
+    );
+    return result;
+  }
+
+  void _publishRotationFlags(List<String> rotateSecretIds) {
+    final selected = rotateSecretIds.toSet();
+    secrets = secrets
+        .map(
+          (s) => selected.contains(s.id) ? s.copyWith(needsRotation: true) : s,
+        )
+        .toList();
   }
 
   void _saveSession(String? token) {
@@ -279,11 +443,162 @@ class VaultController extends ChangeNotifier {
     await refresh();
   }
 
+  Future<void> filterActivity({
+    DateTime? from,
+    DateTime? until,
+    String? project,
+    String? action,
+    String? user,
+  }) async {
+    activityFrom = from;
+    activityUntil = until;
+    activityProject = project;
+    activityAction = action;
+    activityUser = user;
+    pages[1] = 0;
+    activity = [];
+    await refresh();
+  }
+
+  Map<String, String> get _activityFilters => {
+    if (activityFrom != null) 'from': activityFrom!.toIso8601String(),
+    if (activityUntil != null) 'until': activityUntil!.toIso8601String(),
+    'project': ?activityProject,
+    'action': ?activityAction,
+    'user': ?activityUser,
+  };
+
   void _resetPaging() {
+    _listStateContext = null;
     summary = null;
     pages.setAll(0, [0, 0, 0]);
     secretQuery = '';
     secretProject = secretEnvironment = null;
+    activityFrom = activityUntil = null;
+    activityProject = activityAction = activityUser = null;
+  }
+
+  String? _readListPreference(String accountId, String key) {
+    try {
+      return _listStateStore.read(accountId, key);
+    } catch (_) {
+      listStateStorageWarning =
+          'This browser could not restore your saved list pages and filters.';
+      return null;
+    }
+  }
+
+  void _restoreListStateAccount() {
+    final accountId = account?.id;
+    if (accountId == null || accountId == _listStateAccountId) return;
+    _listStateAccountId = accountId;
+    _listStateContext = null;
+    _savedListStates.clear();
+    listStateStorageWarning = null;
+    _preferredOrganizationId = _readListPreference(
+      accountId,
+      ListStateStore.organizationKey,
+    );
+  }
+
+  ListViewState preferredListState(String list) {
+    _restoreListStateAccount();
+    final accountId = account?.id;
+    final orgId = list == 'received-invitations' ? null : organization?.id;
+    if (accountId == null ||
+        !PaginationSettings.lists.contains(list) ||
+        (orgId == null && list != 'received-invitations')) {
+      return const ListViewState();
+    }
+    final key = ListStateStore.listKey(list, orgId);
+    return _savedListStates.putIfAbsent(
+      key,
+      () => ListViewState.decode(_readListPreference(accountId, key)),
+    );
+  }
+
+  void _writeListPreference(String key, String value) {
+    final accountId = account?.id;
+    if (accountId == null) return;
+    try {
+      _listStateStore.write(accountId, key, value);
+    } catch (_) {
+      listStateStorageWarning =
+          'This browser could not save your list page and filters. They may reset after refreshing.';
+    }
+  }
+
+  void _rememberListState(String list, ListViewState state) {
+    _restoreListStateAccount();
+    final orgId = list == 'received-invitations' ? null : organization?.id;
+    if (account == null ||
+        !PaginationSettings.lists.contains(list) ||
+        state.page < 0 ||
+        (orgId == null && list != 'received-invitations')) {
+      return;
+    }
+    final key = ListStateStore.listKey(list, orgId);
+    _savedListStates[key] = state;
+    _writeListPreference(key, state.encode());
+  }
+
+  void rememberInvitationPage(String list, int page, {bool notify = true}) {
+    if (list != 'received-invitations' && list != 'sent-invitations') return;
+    _rememberListState(
+      list,
+      ListViewState(page: page, filters: preferredListState(list).filters),
+    );
+    if (notify) notifyListeners();
+  }
+
+  void filterSentInvitations({required String query, required String status}) {
+    _rememberListState(
+      'sent-invitations',
+      ListViewState(
+        filters: {
+          if (query.isNotEmpty) 'query': query,
+          if (status.isNotEmpty) 'status': status,
+        },
+      ),
+    );
+    notifyListeners();
+  }
+
+  bool _restoreWorkspaceListStates() {
+    _restoreListStateAccount();
+    final accountId = account?.id;
+    final orgId = organization?.id;
+    if (accountId == null || orgId == null) return false;
+    final context = (accountId, orgId);
+    if (_listStateContext == context) return false;
+    _listStateContext = context;
+    for (var i = 0; i < PaginationSettings.primaryLists.length; i++) {
+      pages[i] = preferredListState(PaginationSettings.primaryLists[i]).page;
+    }
+    final filters = preferredListState('secrets').filters;
+    secretQuery = filters['query'] ?? '';
+    secretProject = filters['project'];
+    secretEnvironment = filters['environment'];
+    final activityFilters = preferredListState('activity').filters;
+    activityFrom = DateTime.tryParse(activityFilters['from'] ?? '');
+    activityUntil = DateTime.tryParse(activityFilters['until'] ?? '');
+    if (activityFrom != null &&
+        activityUntil != null &&
+        !activityFrom!.isBefore(activityUntil!)) {
+      activityFrom = activityUntil = null;
+    }
+    activityProject = activityFilters['project'];
+    activityAction = activityFilters['action'];
+    activityUser = activityFilters['user'];
+    return true;
+  }
+
+  void _clampInvitationPage(String list, int count) {
+    final saved = preferredListState(list).page;
+    final last = count == 0 ? 0 : (count - 1) ~/ preferredPageSize(list);
+    if (saved > last) {
+      rememberInvitationPage(list, last, notify: false);
+    }
   }
 
   void _restorePageSizes() {
@@ -337,6 +652,7 @@ class VaultController extends ChangeNotifier {
   Future<void> refresh({int? list, int? page, int? pageSize}) async {
     if (_disposed || account == null || restoringSession) return;
     _restorePageSizes();
+    _restoreListStateAccount();
     if (list != null &&
         (list < 0 ||
             list > 2 ||
@@ -356,6 +672,7 @@ class VaultController extends ChangeNotifier {
     final sentIdsBeforeRefresh = sentInvitations.map((i) => i.id).toSet();
     final profileRevision = _profileRevision;
     final organizationRevisions = Map.of(_organizationRevisions);
+    String? requestedOrganization;
     loading = true;
     error = null;
     notifyListeners();
@@ -398,10 +715,13 @@ class VaultController extends ChangeNotifier {
       }
       organizations = orgs;
       final previousOrganizationId = organization?.id;
+      final requestedOrganizationId =
+          previousOrganizationId ?? _preferredOrganizationId;
       organization =
-          orgs.where((o) => o.id == organization?.id).firstOrNull ??
+          orgs.where((o) => o.id == requestedOrganizationId).firstOrNull ??
           orgs.firstOrNull;
       final org = organization;
+      requestedOrganization = org?.id;
       if (previousOrganizationId != org?.id) {
         _resetPaging();
         requestedPages.setAll(0, pages);
@@ -411,16 +731,29 @@ class VaultController extends ChangeNotifier {
         sentInvitations = [];
       }
       if (org != null) {
+        if (_restoreWorkspaceListStates()) requestedPages.setAll(0, pages);
+        final filters = <String, String>{
+          'query': secretQuery,
+          'project': ?secretProject,
+          'environment': ?secretEnvironment,
+        };
+        final activityFilters = _activityFilters;
+        final from = activityFrom, until = activityUntil;
         final counts = await client.vault.summary(
           org.id,
-          query: secretQuery,
-          project: secretProject,
-          environment: secretEnvironment,
+          query: filters['query'],
+          project: filters['project'],
+          environment: filters['environment'],
+          activityFrom: from,
+          activityUntil: until,
+          activityProject: activityFilters['project'],
+          activityAction: activityFilters['action'],
+          activityUser: activityFilters['user'],
         );
         if (generation != _generation) return;
         final totals = [
           counts.filteredSecretCount,
-          counts.activityCount,
+          counts.filteredActivityCount ?? counts.activityCount,
           counts.memberCount,
         ];
         for (var i = 0; i < 3; i++) {
@@ -434,14 +767,19 @@ class VaultController extends ChangeNotifier {
             org.id,
             offset: requestedPages[0] * requestedSizes[0],
             limit: requestedSizes[0],
-            query: secretQuery,
-            project: secretProject,
-            environment: secretEnvironment,
+            query: filters['query'],
+            project: filters['project'],
+            environment: filters['environment'],
           ),
           client.vault.activity(
             org.id,
             offset: requestedPages[1] * requestedSizes[1],
             limit: requestedSizes[1],
+            from: from,
+            until: until,
+            project: activityFilters['project'],
+            action: activityFilters['action'],
+            user: activityFilters['user'],
           ),
           client.vault.members(
             org.id,
@@ -466,6 +804,21 @@ class VaultController extends ChangeNotifier {
         summary = counts;
         pages.setAll(0, requestedPages);
         pageSizes.setAll(0, requestedSizes);
+        for (var i = 0; i < PaginationSettings.primaryLists.length; i++) {
+          _rememberListState(
+            PaginationSettings.primaryLists[i],
+            ListViewState(
+              page: pages[i],
+              filters: i == 0
+                  ? filters
+                  : i == 1
+                  ? activityFilters
+                  : const {},
+            ),
+          );
+        }
+        _preferredOrganizationId = org.id;
+        _writeListPreference(ListStateStore.organizationKey, org.id);
         if (list != null && pageSize != null) {
           rememberPageSize(
             PaginationSettings.primaryLists[list],
@@ -490,6 +843,7 @@ class VaultController extends ChangeNotifier {
             ),
           ...fetchedInvitations,
         ];
+        _clampInvitationPage('sent-invitations', sentInvitations.length);
       } else {
         _resetPaging();
         secrets = [];
@@ -497,11 +851,31 @@ class VaultController extends ChangeNotifier {
         members = [];
         sentInvitations = [];
       }
+      _clampInvitationPage('received-invitations', invitations.length);
     } catch (e) {
       if (generation == _generation) {
         if (e is ServerpodClientUnauthorized) {
           await _rejectSession();
         } else {
+          if (e is VaultException &&
+              e.message == 'Organization access denied.' &&
+              requestedOrganization != null) {
+            // Membership can be revoked after the organization list response.
+            // Discard that organization's cached rows and let the app dispose
+            // open secret dialogs without signing out of unrelated organizations.
+            organizations = organizations
+                .where((o) => o.id != requestedOrganization)
+                .toList();
+            organization = null;
+            if (_preferredOrganizationId == requestedOrganization) {
+              _preferredOrganizationId = null;
+            }
+            _resetPaging();
+            secrets = [];
+            activity = [];
+            members = [];
+            sentInvitations = [];
+          }
           error = describeError(e);
         }
       }
@@ -516,6 +890,9 @@ class VaultController extends ChangeNotifier {
   Future<void> selectOrganization(OrganizationView org) async {
     _resetPaging();
     organization = org;
+    // Restore before refresh notifies the UI; a new filter chosen during the
+    // organization load must take precedence over saved preferences.
+    _restoreWorkspaceListStates();
     secrets = [];
     activity = [];
     members = [];
@@ -632,6 +1009,31 @@ class VaultController extends ChangeNotifier {
     await refresh();
   }
 
+  Future<String> createProject(String organizationId, String name) async {
+    final sessionToken = auth.token;
+    final accountId = account?.id;
+    try {
+      final created = await client.vault.createProject(organizationId, name);
+      if (!_disposed &&
+          auth.token == sessionToken &&
+          account?.id == accountId &&
+          accountId != null) {
+        (_createdProjects[organizationId] ??= {})[created.toLowerCase()] =
+            created;
+        notifyListeners();
+      }
+      return created;
+    } on ServerpodClientUnauthorized {
+      if (!_disposed &&
+          auth.token == sessionToken &&
+          account?.id == accountId) {
+        await _rejectSession();
+        notifyListeners();
+      }
+      rethrow;
+    }
+  }
+
   Future<void> renameOrganization(String organizationId, String name) {
     final sessionToken = auth.token;
     final accountId = account?.id;
@@ -690,8 +1092,13 @@ class VaultController extends ChangeNotifier {
     String organizationId,
     String email,
     String name,
-    String role,
-  ) async {
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) async {
     final sessionToken = auth.token;
     final accountId = account?.id;
     final created = await client.invitation.create(
@@ -699,6 +1106,11 @@ class VaultController extends ChangeNotifier {
       email,
       name,
       role,
+      readProjects: readProjects,
+      writeProjects: writeProjects,
+      deniedReadProjects: deniedReadProjects,
+      deniedWriteProjects: deniedWriteProjects,
+      canCreateProjects: canCreateProjects,
     );
     if (!_disposed &&
         auth.token == sessionToken &&
@@ -732,6 +1144,10 @@ class VaultController extends ChangeNotifier {
   void _clearSession({bool clearSaved = true}) {
     _resetPaging();
     _pageSizeAccountId = null;
+    _listStateAccountId = null;
+    _preferredOrganizationId = null;
+    _savedListStates.clear();
+    listStateStorageWarning = null;
     _savedPageSizes.clear();
     pageSizes.fillRange(
       0,
@@ -742,7 +1158,9 @@ class VaultController extends ChangeNotifier {
     _generation++;
     _profileWrites = null;
     _organizationWrites = null;
+    _memberWrites = null;
     _organizationRevisions.clear();
+    _createdProjects.clear();
     if (clearSaved) _saveSession(null);
     _sessionNotSaved = false;
     auth.token = null;

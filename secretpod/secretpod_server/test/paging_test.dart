@@ -18,6 +18,7 @@ class MemoryStore implements VaultStore {
     'events': <Map<String, dynamic>>[],
     'secrets': <Map<String, dynamic>>[],
     'invitations': <Map<String, dynamic>>[],
+    'projects': <Map<String, dynamic>>[],
   };
   @override
   Future<T> read<T>(T Function(VaultData) operation) async => operation(data);

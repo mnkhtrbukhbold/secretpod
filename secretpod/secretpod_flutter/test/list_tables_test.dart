@@ -7,6 +7,72 @@ import 'package:secretpod_flutter/widgets/list_table.dart';
 import 'paging_controller_test.dart' show PagingFixture;
 
 void main() {
+  testWidgets('sent search and status filter all pages together', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = PagingFixture();
+    final c = fixture.controller;
+    addTearDown(c.dispose);
+    await c.refresh();
+    c.sentInvitations = [
+      for (var i = 0; i < 31; i++)
+        c.sentInvitations[i].copyWith(
+          recipientName: i == 30 ? 'Morgan' : 'Person $i',
+          recipientEmail: 'person$i@company.test',
+          status: i >= 20 ? 'revoked' : 'pending',
+        ),
+    ];
+    Widget screen(Key key) => MaterialApp(
+      home: Scaffold(
+        body: SingleChildScrollView(
+          child: OutgoingInvitations(key: key, controller: c),
+        ),
+      ),
+    );
+    await tester.pumpWidget(screen(const ValueKey('first')));
+    await tester.ensureVisible(find.byTooltip('Next page'));
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+    final search = find.byType(TextField);
+    await tester.ensureVisible(search);
+    await tester.enterText(search, ' MORGAN ');
+    await tester.pumpAndSettle();
+    expect(find.byType(InvitationTile), findsOneWidget);
+    expect(find.text('Morgan'), findsOneWidget);
+    expect(find.text('Page 1 of 1'), findsOneWidget);
+    await tester.tap(find.byType(SecretPodDropdown<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Pending'));
+    await tester.pumpAndSettle();
+    expect(find.text('No matching invitations'), findsOneWidget);
+    expect(find.byType(InvitationTile), findsNothing);
+    await tester.tap(find.text('Reset filters'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InvitationTile), findsNWidgets(10));
+    await tester.enterText(search, '@COMPANY.TEST');
+    await tester.tap(find.byType(SecretPodDropdown<String>));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Revoked'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InvitationTile), findsNWidgets(10));
+    expect(find.text('Page 1 of 2'), findsOneWidget);
+    await tester.ensureVisible(find.byTooltip('Next page'));
+    await tester.tap(find.byTooltip('Next page'));
+    await tester.pumpAndSettle();
+    expect(find.byType(InvitationTile), findsOneWidget);
+    expect(find.text('Morgan'), findsOneWidget);
+    await tester.pumpWidget(screen(const ValueKey('reopened')));
+    await tester.pumpAndSettle();
+    expect(find.byType(InvitationTile), findsOneWidget);
+    expect(find.text('Page 2 of 2'), findsOneWidget);
+    expect(c.sentInvitations, hasLength(31));
+    expect(tester.takeException(), isNull);
+  });
+
   for (final page in [1, 2, 3, 4]) {
     testWidgets('list $page fits mobile with enlarged text', (tester) async {
       tester.view.physicalSize = const Size(320, 900);
@@ -89,6 +155,10 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.byType(InvitationTile), findsNWidgets(6));
       expect(find.text('Page 2 of 2'), findsOneWidget);
+      await tester.pumpWidget(screen(const ValueKey('reopened-on-page-two')));
+      await tester.pumpAndSettle();
+      expect(find.text('Page 2 of 2'), findsOneWidget);
+      expect(find.byType(InvitationTile), findsNWidgets(6));
       expect(tester.takeException(), isNull);
     },
   );
@@ -150,7 +220,7 @@ void main() {
           ),
         );
         for (final label in [
-          outgoing ? 'RECIPIENT' : 'ORGANIZATION',
+          if (outgoing) ...['NAME', 'EMAIL'] else 'ORGANIZATION',
           'ROLE',
           'STATUS',
           'ACTIONS',

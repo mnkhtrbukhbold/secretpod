@@ -57,8 +57,13 @@ class ListTablePanel extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
+    padding: const EdgeInsets.all(1),
     decoration: BoxDecoration(
       color: context.colors.panel,
+      borderRadius: BorderRadius.circular(22),
+    ),
+    // Paint the outline above opaque headers and rows at the clipped corners.
+    foregroundDecoration: BoxDecoration(
       borderRadius: BorderRadius.circular(22),
       border: Border.all(color: context.colors.outline),
     ),

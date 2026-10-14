@@ -1,6 +1,16 @@
 # Allowlisted source-only build context; never include generated local assets.
 **
 !Dockerfile
+!compose.yaml
+!deploy/
+!deploy/manager.Dockerfile
+!deploy/demo.Dockerfile
+!deploy/demo.Caddyfile
+!deploy/Caddyfile
+!scripts/
+!scripts/host.py
+!scripts/host.sh
+!scripts/host.ps1
 !secretpod/
 secretpod/**
 !secretpod/pubspec.yaml

@@ -1,4 +1,6 @@
 import importlib.util
+import contextlib
+import io
 import json
 import os
 import subprocess
@@ -115,6 +117,38 @@ foreach($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.Secu
         archive.write_bytes(b'changed')
         with self.assertRaisesRegex(ValueError, 'checksum'):
             host.verify_archive(archive, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+
+    def test_container_setup_retains_python_free_management_launchers(self):
+        host.prepare_install(self.root, 'https://localhost', 'example/secretpod:1.0.0')
+        self.assertTrue((self.root / 'scripts/host.sh').is_file())
+        self.assertTrue((self.root / 'scripts/host.ps1').is_file())
+
+    def test_precreated_private_destination_must_be_empty(self):
+        self.root.mkdir()
+        host.require_empty_destination(self.root, allow_empty=True)
+        (self.root / 'keep.txt').write_text('preserve')
+        with self.assertRaises(ValueError):
+            host.require_empty_destination(self.root, allow_empty=True)
+        self.assertEqual((self.root / 'keep.txt').read_text(), 'preserve')
+
+    def test_default_destination_refuses_existing_empty_directory(self):
+        self.root.mkdir()
+        with self.assertRaises(ValueError):
+            host.require_empty_destination(self.root)
+
+    def test_pull_preflight_returns_image_without_creating_keys_or_installation(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            host.main(['setup', '--dir', str(self.root), '--image', 'private.example/team/vault:2.0', '--print-image'])
+        self.assertEqual(output.getvalue().strip(), 'private.example/team/vault:2.0')
+        self.assertFalse(self.root.exists())
+
+    def test_pull_preflight_reads_the_installed_version(self):
+        host.prepare_install(self.root, 'https://localhost', 'private.example/team/vault:1.0')
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            host.main(['up', '--dir', str(self.root), '--print-image'])
+        self.assertEqual(output.getvalue().strip(), 'private.example/team/vault:1.0')
 
 
 if __name__ == '__main__':

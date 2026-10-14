@@ -22,6 +22,15 @@ class VaultEndpoint extends Endpoint {
   );
   Future<OrganizationView> createOrganization(Session session, String name) =>
       VaultServices.instance.organizations.create(_actor(session), name);
+  Future<String> createProject(
+    Session session,
+    String organizationId,
+    String name,
+  ) => VaultServices.instance.vault.createProject(
+    _actor(session),
+    organizationId,
+    name,
+  );
   Future<OrganizationView> renameOrganization(
     Session session,
     String organizationId,
@@ -53,6 +62,27 @@ class VaultEndpoint extends Endpoint {
     email,
     role,
   );
+  Future<MemberView> updateMemberAccess(
+    Session session,
+    String organizationId,
+    String accountId,
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) => VaultServices.instance.organizations.updateMemberAccess(
+    _actor(session),
+    organizationId,
+    accountId,
+    role,
+    readProjects: readProjects,
+    writeProjects: writeProjects,
+    deniedReadProjects: deniedReadProjects,
+    deniedWriteProjects: deniedWriteProjects,
+    canCreateProjects: canCreateProjects,
+  );
   Future<List<SecretView>> memberRemovalSecrets(
     Session session,
     String organizationId,
@@ -80,6 +110,24 @@ class VaultEndpoint extends Endpoint {
     _actor(session),
     organizationId,
     accountId,
+    reviewedSecretIds: reviewedSecretIds,
+    rotateSecretIds: rotateSecretIds,
+    utcOffsetMinutes: utcOffsetMinutes ?? 0,
+  );
+
+  Future<MemberView> setMemberEnabled(
+    Session session,
+    String organizationId,
+    String accountId,
+    bool enabled,
+    List<String> reviewedSecretIds,
+    List<String> rotateSecretIds, {
+    int? utcOffsetMinutes,
+  }) => VaultServices.instance.organizations.setMemberEnabled(
+    _actor(session),
+    organizationId,
+    accountId,
+    enabled,
     reviewedSecretIds: reviewedSecretIds,
     rotateSecretIds: rotateSecretIds,
     utcOffsetMinutes: utcOffsetMinutes ?? 0,
@@ -121,12 +169,22 @@ class VaultEndpoint extends Endpoint {
     String? query,
     String? project,
     String? environment,
+    DateTime? activityFrom,
+    DateTime? activityUntil,
+    String? activityProject,
+    String? activityAction,
+    String? activityUser,
   }) => VaultServices.instance.vault.summary(
     _actor(session),
     organizationId,
     query: query ?? '',
     project: project,
     environment: environment,
+    activityFrom: activityFrom,
+    activityUntil: activityUntil,
+    activityProject: activityProject,
+    activityAction: activityAction,
+    activityUser: activityUser,
   );
   Future<SecretView> saveSecret(
     Session session,
@@ -182,11 +240,21 @@ class VaultEndpoint extends Endpoint {
     String organizationId, {
     int? offset,
     int? limit,
+    DateTime? from,
+    DateTime? until,
+    String? project,
+    String? action,
+    String? user,
   }) => VaultServices.instance.tracking.list(
     _actor(session),
     organizationId,
     offset: offset ?? 0,
     limit: limit ?? Pagination.defaultLimit,
+    from: from,
+    until: until,
+    project: project,
+    action: action,
+    user: user,
   );
   Future<List<AuditView>> secretActivity(
     Session session,

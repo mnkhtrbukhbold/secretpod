@@ -20,28 +20,39 @@ class SecretActivity extends StatefulWidget {
 
 class _SecretActivityState extends State<SecretActivity> {
   List<AuditView> _events = [];
-  bool _loading = true, _hasMore = false;
+  static const _pageSize = PaginationSettings.defaultPageSize;
+  bool _loading = false, _hasMore = false;
+  List<String?> _cursors = [null];
+  int _page = 0, _failedPage = 0;
   String? _error;
-  bool _failedMore = false;
   int _generation = 0;
   @override
   void initState() {
     super.initState();
-    _load();
+    _load(refresh: true);
   }
 
   @override
   void didUpdateWidget(SecretActivity oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.revision != widget.revision ||
-        oldWidget.secret.id != widget.secret.id) {
-      _load();
+    if (oldWidget.secret.id != widget.secret.id ||
+        oldWidget.secret.organizationId != widget.secret.organizationId ||
+        oldWidget.controller != widget.controller) {
+      _events = [];
+      _cursors = [null];
+      _page = 0;
+      _hasMore = false;
+      _load(refresh: true);
+    } else if (oldWidget.revision != widget.revision) {
+      _load(refresh: true);
     }
   }
 
-  Future<void> _load({bool more = false}) async {
+  Future<void> _load({int page = 0, bool refresh = false}) async {
+    // Guard synchronously as two clicks can arrive before the disabled rebuild.
+    if (_loading && !refresh) return;
     final generation = ++_generation;
-    final cursor = more && _events.isNotEmpty ? _events.last.id : null;
+    final cursor = page == 0 ? null : _cursors[page];
     setState(() {
       _loading = true;
       _error = null;
@@ -51,17 +62,28 @@ class _SecretActivityState extends State<SecretActivity> {
         widget.secret.organizationId,
         widget.secret.id,
         cursor,
-        limit: PaginationSettings.defaultPageSize,
+        // One lookahead row avoids an empty Next page for exact multiples.
+        limit: _pageSize + 1,
       );
       if (!mounted || generation != _generation) return;
       setState(() {
-        _events = more ? [..._events, ...events] : events;
-        _hasMore = events.length == PaginationSettings.defaultPageSize;
+        _events = events.take(_pageSize).toList();
+        _hasMore = events.length > _pageSize;
+        _page = page;
+        _cursors = _cursors.take(page + 1).toList();
+        if (_hasMore) _cursors.add(_events.last.id);
+      });
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || generation != _generation) return;
+        final position = Scrollable.maybeOf(context)?.position;
+        if (position != null && position.hasContentDimensions) {
+          position.jumpTo(position.minScrollExtent);
+        }
       });
     } catch (e) {
       if (mounted && generation == _generation) {
         setState(() {
-          _failedMore = more;
+          _failedPage = page;
           _error =
               'Could not load activity. ${VaultController.describeError(e)}';
         });
@@ -89,7 +111,7 @@ class _SecretActivityState extends State<SecretActivity> {
           ),
           IconButton(
             tooltip: 'Refresh activity',
-            onPressed: _loading ? null : () => _load(),
+            onPressed: _loading ? null : () => _load(refresh: true),
             icon: const Icon(Icons.refresh, size: 20),
           ),
         ],
@@ -103,7 +125,7 @@ class _SecretActivityState extends State<SecretActivity> {
       if (_error != null)
         ErrorNotice(
           _error!,
-          onRetry: _loading ? null : () => _load(more: _failedMore),
+          onRetry: _loading ? null : () => _load(page: _failedPage),
         ),
       if (!_loading && _error == null && _events.isEmpty)
         Padding(
@@ -121,10 +143,13 @@ class _SecretActivityState extends State<SecretActivity> {
             children: [
               CircleAvatar(
                 radius: 17,
-                backgroundColor: context.colors.blueContainer,
+                backgroundColor: activityColors(
+                  context,
+                  event.action,
+                ).background,
                 child: Icon(
                   activityIcon(event.action),
-                  color: context.colors.blue,
+                  color: activityColors(context, event.action).foreground,
                   size: 18,
                 ),
               ),
@@ -133,10 +158,7 @@ class _SecretActivityState extends State<SecretActivity> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      activityLabel(event.action),
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
+                    ActivityBadge(event.action),
                     const SizedBox(height: 4),
                     Text(event.actor, style: const TextStyle(fontSize: 13)),
                     if (event.version != null)
@@ -170,18 +192,38 @@ class _SecretActivityState extends State<SecretActivity> {
             ],
           ),
         ),
-      if (_hasMore)
-        TextButton.icon(
-          onPressed: _loading ? null : () => _load(more: true),
-          icon: const Icon(Icons.expand_more),
-          label: const Text('Load older activity'),
-        ),
+      Wrap(
+        spacing: 12,
+        runSpacing: 8,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          TextButton.icon(
+            onPressed: _loading || _page == 0
+                ? null
+                : () => _load(page: _page - 1),
+            icon: const Icon(Icons.chevron_left),
+            label: const Text('Previous'),
+          ),
+          Text(
+            'Page ${_page + 1}',
+            semanticsLabel: 'Activity page ${_page + 1}',
+          ),
+          TextButton.icon(
+            onPressed: _loading || !_hasMore
+                ? null
+                : () => _load(page: _page + 1),
+            icon: const Icon(Icons.chevron_right),
+            label: const Text('Next'),
+          ),
+        ],
+      ),
     ],
   );
 }
 
 String activityLabel(String action) => switch (action) {
-  'rotated' || 'updated' => 'Modified',
+  'rotated' => 'Rotated',
+  'updated' => 'Edited',
   'saved' => 'Saved',
   'copy requested' => 'Copy requested',
   'copied' => 'Copied',
@@ -191,9 +233,13 @@ String activityLabel(String action) => switch (action) {
   'marked needs rotating' => 'Marked needs rotating',
   'cleared rotation flag' => 'Cleared rotation flag',
   'removed member' => 'Removed member',
-  _ => action,
+  _ =>
+    action.isEmpty
+        ? 'Unknown action'
+        : '${action[0].toUpperCase()}${action.substring(1)}',
 };
 IconData activityIcon(String action) => switch (action) {
+  'created' => Icons.add_circle_outline,
   'copy requested' || 'copied' => Icons.copy_outlined,
   'revealed' => Icons.visibility_outlined,
   'rotated' || 'updated' || 'saved' => Icons.edit_outlined,
@@ -201,8 +247,66 @@ IconData activityIcon(String action) => switch (action) {
   'marked needs rotating' ||
   'cleared rotation flag' => Icons.change_circle_outlined,
   'removed member' => Icons.person_remove_outlined,
+  'disabled member access' => Icons.block_outlined,
+  'enabled member access' => Icons.lock_open_outlined,
   _ => Icons.history,
 };
+
+({Color foreground, Color background}) activityColors(
+  BuildContext context,
+  String action,
+) {
+  final colors = context.colors;
+  return switch (action) {
+    'revealed' => (foreground: colors.blue, background: colors.blueContainer),
+    'deleted' || 'removed member' || 'disabled member access' => (
+      foreground: colors.danger,
+      background: colors.dangerContainer,
+    ),
+    'rotated' || 'updated' || 'saved' => (
+      foreground: colors.isDark
+          ? const Color(0xFFFFB77A)
+          : const Color(0xFFA34308),
+      background: colors.isDark
+          ? const Color(0xFF482B18)
+          : const Color(0xFFFFEDD5),
+    ),
+    'created' || 'enabled member access' => (
+      foreground: colors.success,
+      background: colors.successContainer,
+    ),
+    _ => (foreground: colors.muted, background: colors.iconPanel),
+  };
+}
+
+class ActivityBadge extends StatelessWidget {
+  const ActivityBadge(this.action, {super.key});
+  final String action;
+  @override
+  Widget build(BuildContext context) {
+    final colors = activityColors(context, action);
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color: colors.background,
+          border: Border.all(color: colors.foreground.withValues(alpha: .18)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Text(
+          activityLabel(action),
+          style: TextStyle(
+            color: colors.foreground,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 String activityTime(DateTime time) {
   final local = time.toLocal();
   String two(int n) => n.toString().padLeft(2, '0');

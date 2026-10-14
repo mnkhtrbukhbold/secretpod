@@ -2,3 +2,9 @@ class: MemberView
 fields:
   account: AccountView
   role: String
+  accessDisabled: bool, default=false
+  readProjects: List<String>?
+  writeProjects: List<String>?
+  deniedReadProjects: List<String>?
+  deniedWriteProjects: List<String>?
+  canCreateProjects: bool?

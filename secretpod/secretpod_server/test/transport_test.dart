@@ -56,6 +56,7 @@ void main() {
         );
         for (final operation in [
           () => client.vault.renameOrganization('unknown', 'Unauthenticated'),
+          () => client.vault.createProject('unknown', 'Unauthenticated'),
           () => client.profile.updateName('Unauthenticated'),
           () => client.profile.updateEmail('test-password', 'new@example.com'),
           () => client.profile.updateTheme('dark'),
@@ -106,6 +107,22 @@ void main() {
           throwsA(isA<client_api.ServerpodClientUnauthorized>()),
         );
         final org = await client.vault.createOrganization('Transport team');
+        expect(
+          await client.vault.createProject(org.id, '  Empty project  '),
+          'Empty project',
+        );
+        expect((await client.vault.summary(org.id)).projectCounts, {
+          'Default': 0,
+          'Empty project': 0,
+        });
+        expect(
+          await client.vault.listSecrets(org.id, project: 'Empty project'),
+          isEmpty,
+        );
+        await expectLater(
+          client.vault.createProject(org.id, 'EMPTY PROJECT'),
+          throwsA(isA<client_api.VaultException>()),
+        );
         final renamed = await client.vault.renameOrganization(
           org.id,
           'Renamed transport team',
@@ -138,12 +155,43 @@ void main() {
           await client.vault.revealSecret(org.id, secret.id),
           'first-secret-value',
         );
+        final rangeStart = DateTime.now().toUtc().subtract(
+          const Duration(days: 1),
+        );
+        final rangeEnd = rangeStart.add(const Duration(days: 2));
+        final filtered = await client.vault.activity(
+          org.id,
+          from: rangeStart,
+          until: rangeEnd,
+          project: 'Platform',
+          action: 'revealed',
+          user: 'id:${owner.account.id}',
+        );
+        expect(filtered.map((event) => event.action), ['revealed']);
+        final filteredSummary = await client.vault.summary(
+          org.id,
+          activityFrom: rangeStart,
+          activityUntil: rangeEnd,
+          activityProject: 'Platform',
+          activityAction: 'revealed',
+          activityUser: 'id:${owner.account.id}',
+        );
+        expect(filteredSummary.filteredActivityCount, 1);
+        expect(filteredSummary.activityProjects, contains('Platform'));
+        expect(
+          filteredSummary.activityUsers,
+          contains('id:${owner.account.id}'),
+        );
         final outsider = await other.account.register(
           'outsider@example.com',
           'transport-password-123!',
           'Sam',
         );
         otherAuth.token = outsider.token;
+        await expectLater(
+          other.vault.createProject(org.id, 'Outsider project'),
+          throwsA(isA<client_api.VaultException>()),
+        );
         await expectLater(
           other.vault.renameOrganization(org.id, 'Denied'),
           throwsA(isA<client_api.VaultException>()),
@@ -165,6 +213,8 @@ void main() {
           outsider.account.email,
           'Sam',
           'reader',
+          readProjects: ['Platform'],
+          writeProjects: [],
         );
         expect(
           (await other.account.previewInvitation(
@@ -184,6 +234,78 @@ void main() {
         await other.invitation.accept(
           invitation.invitation.id,
           invitation.token,
+        );
+        expect((await other.vault.organizations()).single.readProjects, [
+          'Platform',
+        ]);
+        final changedAccess = await client.vault.updateMemberAccess(
+          org.id,
+          outsider.account.id,
+          'editor',
+          readProjects: null,
+          writeProjects: ['Empty project'],
+        );
+        expect(changedAccess.role, 'editor');
+        expect(changedAccess.writeProjects, ['Empty project']);
+        final creatorAccess = await client.vault.updateMemberAccess(
+          org.id,
+          outsider.account.id,
+          'editor',
+          canCreateProjects: true,
+          deniedReadProjects: ['Platform'],
+          deniedWriteProjects: ['Platform'],
+        );
+        expect(creatorAccess.canCreateProjects, isTrue);
+        expect(creatorAccess.deniedReadProjects, ['Platform']);
+        expect((await other.vault.organizations()).single.deniedReadProjects, [
+          'Platform',
+        ]);
+        expect(await other.vault.listSecrets(org.id), isEmpty);
+        await expectLater(
+          other.vault.secretActivity(org.id, secret.id, null),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await other.vault.createProject(org.id, 'Creator project');
+        final ownSecret = await other.vault.saveSecret(
+          org.id,
+          null,
+          'CREATOR_KEY',
+          'synthetic-creator-value',
+          'Creator project',
+          'Production',
+          'API key',
+          '',
+        );
+        expect((await other.vault.listSecrets(org.id)).single.id, ownSecret.id);
+        await other.vault.deleteSecret(org.id, ownSecret.id);
+        await expectLater(
+          other.vault.setSecretRotationRequired(org.id, secret.id, true),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await expectLater(
+          other.vault.updateMemberAccess(org.id, owner.account.id, 'reader'),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await client.vault.updateMemberAccess(
+          org.id,
+          outsider.account.id,
+          'reader',
+          readProjects: ['Empty project'],
+          writeProjects: [],
+        );
+        expect(await other.vault.listSecrets(org.id), isEmpty);
+        await expectLater(
+          other.vault.revealSecret(org.id, secret.id),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await client.vault.updateMemberAccess(
+          org.id,
+          outsider.account.id,
+          'reader',
+        );
+        await expectLater(
+          other.vault.createProject(org.id, 'Reader project'),
+          throwsA(isA<client_api.VaultException>()),
         );
         expect(
           await other.vault.revealSecret(org.id, secret.id),
@@ -226,7 +348,7 @@ void main() {
           await client.vault.revealSecret(org.id, secret.id),
           'rotated-secret-value',
         );
-        final audit = await client.vault.activity(org.id);
+        final audit = await client.vault.activity(org.id, limit: 100);
         expect(
           audit.map((e) => e.action),
           containsAll(['created', 'revealed', 'rotated']),
@@ -324,6 +446,14 @@ void main() {
         expect(newcomer.account.name, 'Chosen name');
         expect(newcomer.account.email, 'newcomer@example.com');
         otherAuth.token = newcomer.token;
+        expect(
+          await other.vault.createProject(org.id, 'Editor project'),
+          'Editor project',
+        );
+        expect(
+          (await client.vault.summary(org.id)).projectCounts['Editor project'],
+          0,
+        );
         expect((await other.vault.organizations()).single.role, 'editor');
         expect((await other.invitation.inbox()).single.status, 'accepted');
         await other.invitation.updatePolicy('none');
@@ -433,6 +563,63 @@ void main() {
           utcOffsetMinutes: 120,
         );
         expect(removalSecrets.map((s) => s.id), [pagingSecret.id]);
+        final disabled = await client.vault.setMemberEnabled(
+          org.id,
+          newcomer.account.id,
+          false,
+          [pagingSecret.id],
+          [pagingSecret.id],
+          utcOffsetMinutes: 120,
+        );
+        expect(disabled.accessDisabled, isTrue);
+        expect((await client.vault.summary(org.id)).memberCount, 3);
+        expect(
+          (await client.vault.members(org.id))
+              .singleWhere((m) => m.account.id == newcomer.account.id)
+              .accessDisabled,
+          isTrue,
+        );
+        expect(await other.vault.organizations(), isEmpty);
+        await expectLater(
+          other.vault.listSecrets(org.id),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await expectLater(
+          other.vault.revealSecret(org.id, pagingSecret.id),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await expectLater(
+          other.vault.setMemberEnabled(
+            org.id,
+            newcomer.account.id,
+            true,
+            [],
+            [],
+          ),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        await expectLater(
+          other.invitation.accept(
+            newcomerInvite.invitation.id,
+            newcomerInvite.token,
+          ),
+          throwsA(isA<client_api.VaultException>()),
+        );
+        final enabled = await client.vault.setMemberEnabled(
+          org.id,
+          newcomer.account.id,
+          true,
+          [],
+          [],
+        );
+        expect(enabled.accessDisabled, isFalse);
+        expect(enabled.role, disabled.role);
+        expect((await other.vault.organizations()).single.id, org.id);
+        expect(
+          (await other.vault.listSecrets(org.id)).single.needsRotation,
+          isTrue,
+        );
+        await other.vault.revealSecret(org.id, pagingSecret.id);
         expect(
           (await client.vault.setSecretRotationRequired(
             org.id,

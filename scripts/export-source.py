@@ -14,7 +14,7 @@ import stat
 ROOT_FILES = {
     "README.md", "Dockerfile", ".dockerignore", ".gitignore", ".gitattributes", "compose.yaml",
     "LICENSE", "LICENSE.md", "NOTICE", "docs/development.md",
-    "docs/self-hosting.md", "docs/release.md", "secretpod/pubspec.yaml",
+    "docs/self-hosting.md", "docs/release.md", "docs/demo.md", "secretpod/pubspec.yaml",
     "secretpod/pubspec.lock",
 }
 PACKAGE_FILES = {
@@ -102,7 +102,7 @@ def selected_files(source):
                 relative = path.relative_to(source)
                 if is_link(path) or not safe_name(relative):
                     continue
-                if path.suffix.lower() in SOURCE_SUFFIXES or filename in {"Caddyfile", "CMakeLists.txt", ".gitignore"}:
+                if path.suffix.lower() in SOURCE_SUFFIXES or filename in {"Caddyfile", "manager.Dockerfile", "demo.Dockerfile", "demo.Caddyfile", "CMakeLists.txt", ".gitignore"}:
                     selected.add(relative)
     return sorted(selected, key=lambda path: path.as_posix())
 

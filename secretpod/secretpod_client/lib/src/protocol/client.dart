@@ -103,8 +103,13 @@ class EndpointInvitation extends _isc.EndpointRef {
     String organizationId,
     String email,
     String name,
-    String role,
-  ) => caller.callServerEndpoint<_iyyr91rv.InvitationCreated>(
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) => caller.callServerEndpoint<_iyyr91rv.InvitationCreated>(
     'invitation',
     'create',
     {
@@ -112,6 +117,11 @@ class EndpointInvitation extends _isc.EndpointRef {
       'email': email,
       'name': name,
       'role': role,
+      'readProjects': readProjects,
+      'writeProjects': writeProjects,
+      'deniedReadProjects': deniedReadProjects,
+      'deniedWriteProjects': deniedWriteProjects,
+      'canCreateProjects': canCreateProjects,
     },
   );
 
@@ -258,6 +268,18 @@ class EndpointVault extends _isc.EndpointRef {
         {'name': name},
       );
 
+  _ida.Future<String> createProject(
+    String organizationId,
+    String name,
+  ) => caller.callServerEndpoint<String>(
+    'vault',
+    'createProject',
+    {
+      'organizationId': organizationId,
+      'name': name,
+    },
+  );
+
   _ida.Future<_io5hdo2c.OrganizationView> renameOrganization(
     String organizationId,
     String name,
@@ -298,6 +320,30 @@ class EndpointVault extends _isc.EndpointRef {
     },
   );
 
+  _ida.Future<_idtekx1t.MemberView> updateMemberAccess(
+    String organizationId,
+    String accountId,
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) => caller.callServerEndpoint<_idtekx1t.MemberView>(
+    'vault',
+    'updateMemberAccess',
+    {
+      'organizationId': organizationId,
+      'accountId': accountId,
+      'role': role,
+      'readProjects': readProjects,
+      'writeProjects': writeProjects,
+      'deniedReadProjects': deniedReadProjects,
+      'deniedWriteProjects': deniedWriteProjects,
+      'canCreateProjects': canCreateProjects,
+    },
+  );
+
   _ida.Future<List<_il4xcmkq.SecretView>> memberRemovalSecrets(
     String organizationId,
     String accountId, {
@@ -328,6 +374,26 @@ class EndpointVault extends _isc.EndpointRef {
     {
       'organizationId': organizationId,
       'accountId': accountId,
+      'reviewedSecretIds': reviewedSecretIds,
+      'rotateSecretIds': rotateSecretIds,
+      'utcOffsetMinutes': utcOffsetMinutes,
+    },
+  );
+
+  _ida.Future<_idtekx1t.MemberView> setMemberEnabled(
+    String organizationId,
+    String accountId,
+    bool enabled,
+    List<String> reviewedSecretIds,
+    List<String> rotateSecretIds, {
+    int? utcOffsetMinutes,
+  }) => caller.callServerEndpoint<_idtekx1t.MemberView>(
+    'vault',
+    'setMemberEnabled',
+    {
+      'organizationId': organizationId,
+      'accountId': accountId,
+      'enabled': enabled,
       'reviewedSecretIds': reviewedSecretIds,
       'rotateSecretIds': rotateSecretIds,
       'utcOffsetMinutes': utcOffsetMinutes,
@@ -373,6 +439,11 @@ class EndpointVault extends _isc.EndpointRef {
     String? query,
     String? project,
     String? environment,
+    DateTime? activityFrom,
+    DateTime? activityUntil,
+    String? activityProject,
+    String? activityAction,
+    String? activityUser,
   }) => caller.callServerEndpoint<_iuy5swc1.WorkspaceSummary>(
     'vault',
     'summary',
@@ -381,6 +452,11 @@ class EndpointVault extends _isc.EndpointRef {
       'query': query,
       'project': project,
       'environment': environment,
+      'activityFrom': activityFrom,
+      'activityUntil': activityUntil,
+      'activityProject': activityProject,
+      'activityAction': activityAction,
+      'activityUser': activityUser,
     },
   );
 
@@ -456,6 +532,11 @@ class EndpointVault extends _isc.EndpointRef {
     String organizationId, {
     int? offset,
     int? limit,
+    DateTime? from,
+    DateTime? until,
+    String? project,
+    String? action,
+    String? user,
   }) => caller.callServerEndpoint<List<_ijkr5qom.AuditView>>(
     'vault',
     'activity',
@@ -463,6 +544,11 @@ class EndpointVault extends _isc.EndpointRef {
       'organizationId': organizationId,
       'offset': offset,
       'limit': limit,
+      'from': from,
+      'until': until,
+      'project': project,
+      'action': action,
+      'user': user,
     },
   );
 

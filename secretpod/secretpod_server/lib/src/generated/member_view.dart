@@ -19,11 +19,23 @@ abstract class MemberView
   MemberView._({
     required this.account,
     required this.role,
-  });
+    bool? accessDisabled,
+    this.readProjects,
+    this.writeProjects,
+    this.deniedReadProjects,
+    this.deniedWriteProjects,
+    this.canCreateProjects,
+  }) : accessDisabled = accessDisabled ?? false;
 
   factory MemberView({
     required _i4ejbnhv.AccountView account,
     required String role,
+    bool? accessDisabled,
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
   }) = _MemberViewImpl;
 
   factory MemberView.fromJson(Map<String, dynamic> jsonSerialization) {
@@ -32,6 +44,34 @@ abstract class MemberView
         jsonSerialization['account'],
       ),
       role: jsonSerialization['role'] as String,
+      accessDisabled: jsonSerialization['accessDisabled'] == null
+          ? null
+          : _is.BoolJsonExtension.fromJson(jsonSerialization['accessDisabled']),
+      readProjects: jsonSerialization['readProjects'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<List<String>>(
+              jsonSerialization['readProjects'],
+            ),
+      writeProjects: jsonSerialization['writeProjects'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<List<String>>(
+              jsonSerialization['writeProjects'],
+            ),
+      deniedReadProjects: jsonSerialization['deniedReadProjects'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<List<String>>(
+              jsonSerialization['deniedReadProjects'],
+            ),
+      deniedWriteProjects: jsonSerialization['deniedWriteProjects'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<List<String>>(
+              jsonSerialization['deniedWriteProjects'],
+            ),
+      canCreateProjects: jsonSerialization['canCreateProjects'] == null
+          ? null
+          : _is.BoolJsonExtension.fromJson(
+              jsonSerialization['canCreateProjects'],
+            ),
     );
   }
 
@@ -39,12 +79,30 @@ abstract class MemberView
 
   String role;
 
+  bool accessDisabled;
+
+  List<String>? readProjects;
+
+  List<String>? writeProjects;
+
+  List<String>? deniedReadProjects;
+
+  List<String>? deniedWriteProjects;
+
+  bool? canCreateProjects;
+
   /// Returns a shallow copy of this [MemberView]
   /// with some or all fields replaced by the given arguments.
   @_is.useResult
   MemberView copyWith({
     _i4ejbnhv.AccountView? account,
     String? role,
+    bool? accessDisabled,
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
   });
   @override
   Map<String, dynamic> toJson() {
@@ -52,6 +110,14 @@ abstract class MemberView
       '__className__': 'MemberView',
       'account': account.toJson(),
       'role': role,
+      'accessDisabled': accessDisabled,
+      if (readProjects != null) 'readProjects': readProjects?.toJson(),
+      if (writeProjects != null) 'writeProjects': writeProjects?.toJson(),
+      if (deniedReadProjects != null)
+        'deniedReadProjects': deniedReadProjects?.toJson(),
+      if (deniedWriteProjects != null)
+        'deniedWriteProjects': deniedWriteProjects?.toJson(),
+      if (canCreateProjects != null) 'canCreateProjects': canCreateProjects,
     };
   }
 
@@ -61,6 +127,14 @@ abstract class MemberView
       '__className__': 'MemberView',
       'account': account.toJsonForProtocol(),
       'role': role,
+      'accessDisabled': accessDisabled,
+      if (readProjects != null) 'readProjects': readProjects?.toJson(),
+      if (writeProjects != null) 'writeProjects': writeProjects?.toJson(),
+      if (deniedReadProjects != null)
+        'deniedReadProjects': deniedReadProjects?.toJson(),
+      if (deniedWriteProjects != null)
+        'deniedWriteProjects': deniedWriteProjects?.toJson(),
+      if (canCreateProjects != null) 'canCreateProjects': canCreateProjects,
     };
   }
 
@@ -70,13 +144,27 @@ abstract class MemberView
   }
 }
 
+class _Undefined {}
+
 class _MemberViewImpl extends MemberView {
   _MemberViewImpl({
     required _i4ejbnhv.AccountView account,
     required String role,
+    bool? accessDisabled,
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
   }) : super._(
          account: account,
          role: role,
+         accessDisabled: accessDisabled,
+         readProjects: readProjects,
+         writeProjects: writeProjects,
+         deniedReadProjects: deniedReadProjects,
+         deniedWriteProjects: deniedWriteProjects,
+         canCreateProjects: canCreateProjects,
        );
 
   /// Returns a shallow copy of this [MemberView]
@@ -86,10 +174,32 @@ class _MemberViewImpl extends MemberView {
   MemberView copyWith({
     _i4ejbnhv.AccountView? account,
     String? role,
+    bool? accessDisabled,
+    Object? readProjects = _Undefined,
+    Object? writeProjects = _Undefined,
+    Object? deniedReadProjects = _Undefined,
+    Object? deniedWriteProjects = _Undefined,
+    Object? canCreateProjects = _Undefined,
   }) {
     return MemberView(
       account: account ?? this.account.copyWith(),
       role: role ?? this.role,
+      accessDisabled: accessDisabled ?? this.accessDisabled,
+      readProjects: readProjects is List<String>?
+          ? readProjects
+          : this.readProjects?.map((e0) => e0).toList(),
+      writeProjects: writeProjects is List<String>?
+          ? writeProjects
+          : this.writeProjects?.map((e0) => e0).toList(),
+      deniedReadProjects: deniedReadProjects is List<String>?
+          ? deniedReadProjects
+          : this.deniedReadProjects?.map((e0) => e0).toList(),
+      deniedWriteProjects: deniedWriteProjects is List<String>?
+          ? deniedWriteProjects
+          : this.deniedWriteProjects?.map((e0) => e0).toList(),
+      canCreateProjects: canCreateProjects is bool?
+          ? canCreateProjects
+          : this.canCreateProjects,
     );
   }
 }

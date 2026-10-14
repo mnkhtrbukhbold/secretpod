@@ -203,6 +203,31 @@ class Endpoints extends _is.EndpointDispatch {
               type: _is.getType<String>(),
               nullable: false,
             ),
+            'readProjects': _is.ParameterDescription(
+              name: 'readProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'writeProjects': _is.ParameterDescription(
+              name: 'writeProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'deniedReadProjects': _is.ParameterDescription(
+              name: 'deniedReadProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'deniedWriteProjects': _is.ParameterDescription(
+              name: 'deniedWriteProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'canCreateProjects': _is.ParameterDescription(
+              name: 'canCreateProjects',
+              type: _is.getType<bool?>(),
+              nullable: true,
+            ),
           },
           call:
               (
@@ -216,6 +241,11 @@ class Endpoints extends _is.EndpointDispatch {
                         params['email'],
                         params['name'],
                         params['role'],
+                        readProjects: params['readProjects'],
+                        writeProjects: params['writeProjects'],
+                        deniedReadProjects: params['deniedReadProjects'],
+                        deniedWriteProjects: params['deniedWriteProjects'],
+                        canCreateProjects: params['canCreateProjects'],
                       ),
         ),
         'inbox': _is.MethodConnector(
@@ -523,6 +553,31 @@ class Endpoints extends _is.EndpointDispatch {
                     params['name'],
                   ),
         ),
+        'createProject': _is.MethodConnector(
+          name: 'createProject',
+          params: {
+            'organizationId': _is.ParameterDescription(
+              name: 'organizationId',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+            'name': _is.ParameterDescription(
+              name: 'name',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+          },
+          call:
+              (
+                _is.Session session,
+                Map<String, dynamic> params,
+              ) async =>
+                  (endpoints['vault'] as _iy4ugio0.VaultEndpoint).createProject(
+                    session,
+                    params['organizationId'],
+                    params['name'],
+                  ),
+        ),
         'renameOrganization': _is.MethodConnector(
           name: 'renameOrganization',
           params: {
@@ -610,6 +665,67 @@ class Endpoints extends _is.EndpointDispatch {
                     params['role'],
                   ),
         ),
+        'updateMemberAccess': _is.MethodConnector(
+          name: 'updateMemberAccess',
+          params: {
+            'organizationId': _is.ParameterDescription(
+              name: 'organizationId',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+            'accountId': _is.ParameterDescription(
+              name: 'accountId',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+            'role': _is.ParameterDescription(
+              name: 'role',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+            'readProjects': _is.ParameterDescription(
+              name: 'readProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'writeProjects': _is.ParameterDescription(
+              name: 'writeProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'deniedReadProjects': _is.ParameterDescription(
+              name: 'deniedReadProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'deniedWriteProjects': _is.ParameterDescription(
+              name: 'deniedWriteProjects',
+              type: _is.getType<List<String>?>(),
+              nullable: true,
+            ),
+            'canCreateProjects': _is.ParameterDescription(
+              name: 'canCreateProjects',
+              type: _is.getType<bool?>(),
+              nullable: true,
+            ),
+          },
+          call:
+              (
+                _is.Session session,
+                Map<String, dynamic> params,
+              ) async => (endpoints['vault'] as _iy4ugio0.VaultEndpoint)
+                  .updateMemberAccess(
+                    session,
+                    params['organizationId'],
+                    params['accountId'],
+                    params['role'],
+                    readProjects: params['readProjects'],
+                    writeProjects: params['writeProjects'],
+                    deniedReadProjects: params['deniedReadProjects'],
+                    deniedWriteProjects: params['deniedWriteProjects'],
+                    canCreateProjects: params['canCreateProjects'],
+                  ),
+        ),
         'memberRemovalSecrets': _is.MethodConnector(
           name: 'memberRemovalSecrets',
           params: {
@@ -691,6 +807,55 @@ class Endpoints extends _is.EndpointDispatch {
                     session,
                     params['organizationId'],
                     params['accountId'],
+                    params['reviewedSecretIds'],
+                    params['rotateSecretIds'],
+                    utcOffsetMinutes: params['utcOffsetMinutes'],
+                  ),
+        ),
+        'setMemberEnabled': _is.MethodConnector(
+          name: 'setMemberEnabled',
+          params: {
+            'organizationId': _is.ParameterDescription(
+              name: 'organizationId',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+            'accountId': _is.ParameterDescription(
+              name: 'accountId',
+              type: _is.getType<String>(),
+              nullable: false,
+            ),
+            'enabled': _is.ParameterDescription(
+              name: 'enabled',
+              type: _is.getType<bool>(),
+              nullable: false,
+            ),
+            'reviewedSecretIds': _is.ParameterDescription(
+              name: 'reviewedSecretIds',
+              type: _is.getType<List<String>>(),
+              nullable: false,
+            ),
+            'rotateSecretIds': _is.ParameterDescription(
+              name: 'rotateSecretIds',
+              type: _is.getType<List<String>>(),
+              nullable: false,
+            ),
+            'utcOffsetMinutes': _is.ParameterDescription(
+              name: 'utcOffsetMinutes',
+              type: _is.getType<int?>(),
+              nullable: true,
+            ),
+          },
+          call:
+              (
+                _is.Session session,
+                Map<String, dynamic> params,
+              ) async => (endpoints['vault'] as _iy4ugio0.VaultEndpoint)
+                  .setMemberEnabled(
+                    session,
+                    params['organizationId'],
+                    params['accountId'],
+                    params['enabled'],
                     params['reviewedSecretIds'],
                     params['rotateSecretIds'],
                     utcOffsetMinutes: params['utcOffsetMinutes'],
@@ -799,6 +964,31 @@ class Endpoints extends _is.EndpointDispatch {
               type: _is.getType<String?>(),
               nullable: true,
             ),
+            'activityFrom': _is.ParameterDescription(
+              name: 'activityFrom',
+              type: _is.getType<DateTime?>(),
+              nullable: true,
+            ),
+            'activityUntil': _is.ParameterDescription(
+              name: 'activityUntil',
+              type: _is.getType<DateTime?>(),
+              nullable: true,
+            ),
+            'activityProject': _is.ParameterDescription(
+              name: 'activityProject',
+              type: _is.getType<String?>(),
+              nullable: true,
+            ),
+            'activityAction': _is.ParameterDescription(
+              name: 'activityAction',
+              type: _is.getType<String?>(),
+              nullable: true,
+            ),
+            'activityUser': _is.ParameterDescription(
+              name: 'activityUser',
+              type: _is.getType<String?>(),
+              nullable: true,
+            ),
           },
           call:
               (
@@ -811,6 +1001,11 @@ class Endpoints extends _is.EndpointDispatch {
                     query: params['query'],
                     project: params['project'],
                     environment: params['environment'],
+                    activityFrom: params['activityFrom'],
+                    activityUntil: params['activityUntil'],
+                    activityProject: params['activityProject'],
+                    activityAction: params['activityAction'],
+                    activityUser: params['activityUser'],
                   ),
         ),
         'saveSecret': _is.MethodConnector(
@@ -991,6 +1186,31 @@ class Endpoints extends _is.EndpointDispatch {
               type: _is.getType<int?>(),
               nullable: true,
             ),
+            'from': _is.ParameterDescription(
+              name: 'from',
+              type: _is.getType<DateTime?>(),
+              nullable: true,
+            ),
+            'until': _is.ParameterDescription(
+              name: 'until',
+              type: _is.getType<DateTime?>(),
+              nullable: true,
+            ),
+            'project': _is.ParameterDescription(
+              name: 'project',
+              type: _is.getType<String?>(),
+              nullable: true,
+            ),
+            'action': _is.ParameterDescription(
+              name: 'action',
+              type: _is.getType<String?>(),
+              nullable: true,
+            ),
+            'user': _is.ParameterDescription(
+              name: 'user',
+              type: _is.getType<String?>(),
+              nullable: true,
+            ),
           },
           call:
               (
@@ -1002,6 +1222,11 @@ class Endpoints extends _is.EndpointDispatch {
                     params['organizationId'],
                     offset: params['offset'],
                     limit: params['limit'],
+                    from: params['from'],
+                    until: params['until'],
+                    project: params['project'],
+                    action: params['action'],
+                    user: params['user'],
                   ),
         ),
         'secretActivity': _is.MethodConnector(

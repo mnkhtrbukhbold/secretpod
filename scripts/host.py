@@ -19,7 +19,7 @@ from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 SOURCE = Path(__file__).resolve().parents[1]
-DEFAULT_IMAGE = 'ghcr.io/mnkhtrbukhbold/secretpod:0.1.0'
+DEFAULT_IMAGE = 'ghcr.io/mnkhtrbukhbold/secretpod:0.1.1'
 
 
 def sha256(path):
@@ -28,6 +28,15 @@ def sha256(path):
         for block in iter(lambda: stream.read(1024 * 1024), b''):
             digest.update(block)
     return digest.hexdigest()
+
+
+def display_path(path):
+    value = str(path)
+    install_parent = os.environ.get('SECRETPOD_CONTAINER_PARENT', '/installation').rstrip('/') + '/'
+    for container_path, variable in [(install_parent, 'SECRETPOD_DISPLAY_PARENT'), ('/backup/', 'SECRETPOD_DISPLAY_BACKUP_PARENT')]:
+        if value.startswith(container_path) and os.environ.get(variable):
+            return os.environ[variable].rstrip('/\\') + '/' + value[len(container_path):]
+    return value
 
 
 def public_url(value):
@@ -149,6 +158,8 @@ def prepare_install(root, url, image, http_port=80):
     (root / 'scripts').mkdir()
     shutil.copyfile(SOURCE / 'deploy/Caddyfile', root / 'deploy/Caddyfile')
     shutil.copyfile(Path(__file__), root / 'scripts/host.py')
+    for launcher in ['host.sh', 'host.ps1']:
+        shutil.copyfile(SOURCE / 'scripts' / launcher, root / 'scripts' / launcher)
     write_config(root, manifest)
     return manifest
 
@@ -160,7 +171,7 @@ def installation_lock(root):
     try:
         lock.mkdir(mode=0o700)
     except FileExistsError:
-        raise ValueError('Another operation is active. After a crash, verify no operation is running before removing ' + str(lock)) from None
+        raise ValueError('Another operation is active. After a crash, verify no operation is running before removing ' + display_path(lock)) from None
     try:
         yield
     finally:
@@ -245,10 +256,17 @@ def start(root, manifest, pull=True, upgrading=False):
     compose(root, manifest, 'up', '-d', '--wait', '--wait-timeout', '120', '--pull', 'never')
 
 
+def require_empty_destination(destination, allow_empty=False):
+    destination = Path(destination)
+    if destination.is_symlink() or (destination.exists() and (
+        not allow_empty or not destination.is_dir() or any(destination.iterdir())
+    )):
+        raise ValueError('Destination must be new and empty; existing data is never overwritten.')
+
+
 def backup(root, manifest, destination, resume=True):
     destination = Path(destination).resolve()
-    if destination.exists():
-        raise ValueError('Backup destination must not exist.')
+    require_empty_destination(destination, allow_empty=os.environ.get('SECRETPOD_MANAGER') == '1')
     private_directory(destination)
     container = compose(root, manifest, 'ps', '--all', '-q', 'secretpod', stdout=subprocess.PIPE, text=True).stdout.strip()
     status = run(['docker', 'inspect', '--format', '{{.State.Status}}', container], stdout=subprocess.PIPE, text=True).stdout.strip() if container else ''
@@ -299,8 +317,7 @@ def validate_backup(directory):
 
 def restore(root, directory, url=None, http_port=80, pull=True):
     original = validate_backup(directory)
-    if root.exists():
-        raise ValueError('Restore requires a new installation directory; existing data is never overwritten.')
+    require_empty_destination(root, allow_empty=os.environ.get('SECRETPOD_MANAGER') == '1')
     manifest = prepare_install(root, url or original['url'], original['image'], http_port)
     key = root / 'secrets/master_key'
     key.chmod(0o600)
@@ -326,15 +343,15 @@ def upgrade(root, manifest, image, pull=True):
     backup(root, manifest, destination, resume=False)
     updated = dict(manifest, image=image)
     pending = root / 'upgrade-pending.json'
-    private_write(pending, json.dumps({'backup': str(destination), 'previousImage': manifest['image'], 'candidateImage': image}))
+    private_write(pending, json.dumps({'backup': display_path(destination), 'previousImage': manifest['image'], 'candidateImage': image}))
     write_config(root, updated)
     try:
         start(root, updated, pull=False, upgrading=True)
     except subprocess.CalledProcessError:
         compose(root, updated, 'stop', 'secretpod')
-        raise ValueError(f'Upgrade failed. Application stopped; restore backup {destination} to a new directory. Do not downgrade a migrated database in place.') from None
+        raise ValueError(f'Upgrade failed. Application stopped; restore backup {display_path(destination)} to a new directory. Do not downgrade a migrated database in place.') from None
     pending.unlink()
-    print('Pre-upgrade backup: ' + str(destination))
+    print('Pre-upgrade backup: ' + display_path(destination))
     return updated
 
 
@@ -347,8 +364,27 @@ def main(argv=None):
     parser.add_argument('--http-port', type=int, default=80)
     parser.add_argument('--backup', type=Path, help='New output directory for backup; existing backup directory for restore')
     parser.add_argument('--no-pull', action='store_true', help='Use already-loaded images (offline/testing)')
+    parser.add_argument('--print-image', action='store_true', help=argparse.SUPPRESS)
     args = parser.parse_args(argv)
     root = args.dir.expanduser().absolute()
+    if args.print_image:
+        # Read-only preflight lets the host Docker CLI use its existing login.
+        if args.command == 'restore':
+            if not args.backup:
+                parser.error('restore requires --backup')
+            selected = validate_backup(args.backup)['image']
+        elif args.command == 'upgrade':
+            if not args.image:
+                parser.error('upgrade requires --image')
+            selected = args.image
+        elif args.command == 'setup':
+            selected = args.image or (read_install(root)['image'] if (root / 'manifest.json').exists() else DEFAULT_IMAGE)
+        elif args.command == 'up':
+            selected = read_install(root)['image']
+        else:
+            parser.error('This operation does not pull an image.')
+        print(image_name(selected))
+        return
     prerequisites()
     with installation_lock(root):
         dispatch(args, parser, root)
@@ -374,7 +410,7 @@ def dispatch(args, parser, root):
             elif args.command == 'backup':
                 if not args.backup:
                     parser.error('backup requires --backup')
-                print('Backup: ' + str(backup(root, manifest, args.backup)))
+                print('Backup: ' + display_path(backup(root, manifest, args.backup)))
             elif args.command == 'upgrade':
                 if not args.image:
                     parser.error('upgrade requires --image')
@@ -383,7 +419,7 @@ def dispatch(args, parser, root):
                 if urlsplit(manifest['url']).hostname != 'localhost':
                     raise ValueError('trust-cert is only for local HTTPS installations.')
                 compose(root, manifest, 'cp', 'proxy:/data/caddy/pki/authorities/local/root.crt', str(root / 'local-root.crt'))
-                print('Local CA certificate: ' + str(root / 'local-root.crt') + '. Import into your trust store to trust local HTTPS.')
+                print('Local CA certificate: ' + display_path(root / 'local-root.crt') + '. Import into your trust store to trust local HTTPS.')
     print('SecretPod: ' + manifest['url'])
 
 

@@ -4,14 +4,78 @@ import '../generated/protocol.dart';
 import '../organization/access.dart';
 import '../storage/vault_store.dart';
 import '../tracking/tracking_service.dart';
+import '../tracking/activity_filter.dart';
 import '../validation.dart';
 import '../paging.dart';
 import 'rotation.dart';
+import 'secret_access_limiter.dart';
 
 class VaultService {
-  VaultService(this.store, this.crypto);
+  VaultService(this.store, this.crypto, {SecretAccessLimiter? accessLimiter})
+    : _accessLimiter = accessLimiter ?? SecretAccessLimiter();
   final VaultStore store;
   final CryptoService crypto;
+  final SecretAccessLimiter _accessLimiter;
+
+  // Legacy projects existed only through secrets. Retain their identity when
+  // the last secret moves or is deleted so existing writers can use them again.
+  static void _retainProject(
+    VaultData data,
+    String organizationId,
+    String name,
+  ) {
+    if (name.toLowerCase() == 'default') return;
+    final projects = rows(data, 'projects');
+    if (!projects.any(
+      (p) =>
+          p['organizationId'] == organizationId &&
+          (p['name'] as String).toLowerCase() == name.toLowerCase(),
+    )) {
+      projects.add({'organizationId': organizationId, 'name': name});
+    }
+  }
+
+  Future<String> createProject(
+    String actor,
+    String organizationId,
+    String name,
+  ) => store.write((data) {
+    final access = ProjectAccess(data, actor, organizationId);
+    if (!access.canCreateProjects) {
+      throw VaultException(
+        message: 'You do not have permission to create projects.',
+      );
+    }
+    final canonicalName = bounded(name, 'Project', max: 80);
+    access.require(canonicalName, write: true);
+    final normalized = canonicalName.toLowerCase();
+    if (normalized == 'default' ||
+        rows(data, 'projects').any(
+          (project) =>
+              project['organizationId'] == organizationId &&
+              (project['name'] as String).toLowerCase() == normalized,
+        ) ||
+        rows(data, 'secrets').any(
+          (secret) =>
+              secret['organizationId'] == organizationId &&
+              (secret['project'] as String).toLowerCase() == normalized,
+        )) {
+      throw VaultException(message: 'A project with this name already exists.');
+    }
+    rows(data, 'projects').add({
+      'organizationId': organizationId,
+      'name': canonicalName,
+    });
+    recordEvent(
+      data,
+      actor,
+      organizationId,
+      'created project',
+      canonicalName,
+      project: canonicalName,
+    );
+    return canonicalName;
+  });
 
   static bool _matches(
     Map<String, dynamic> s,
@@ -35,13 +99,14 @@ class VaultService {
     String? project,
     String? environment,
   }) => store.read((data) {
-    requireMembership(data, actor, organizationId);
+    final access = ProjectAccess(data, actor, organizationId);
     final paging = Pagination(offset: offset, limit: limit);
     final matches =
         rows(data, 'secrets')
             .where(
               (s) =>
                   s['organizationId'] == organizationId &&
+                  access.canRead(s['project'] as String) &&
                   _matches(s, query, project, environment),
             )
             .toList()
@@ -62,18 +127,83 @@ class VaultService {
     String query = '',
     String? project,
     String? environment,
+    DateTime? activityFrom,
+    DateTime? activityUntil,
+    String? activityProject,
+    String? activityAction,
+    String? activityUser,
   }) => store.read((data) {
-    requireMembership(data, actor, organizationId);
-    final secrets = rows(
+    final access = ProjectAccess(data, actor, organizationId);
+    final activityFilter = ActivityFilter(
+      from: activityFrom,
+      until: activityUntil,
+      project: activityProject,
+      action: activityAction,
+      user: activityUser,
+    );
+    final events =
+        rows(
+              data,
+              'events',
+            )
+            .where(
+              (e) =>
+                  e['organizationId'] == organizationId &&
+                  access.canReadEvent(data, e),
+            )
+            .toList();
+    final activityProjects = <String, String>{};
+    final activityUsers = <String, String>{};
+    for (final event in events) {
+      final project = event['project'] as String?;
+      if (project != null) {
+        activityProjects.putIfAbsent(project.toLowerCase(), () => project);
+      }
+    }
+    // Member choices use current identities, including members without events.
+    // Legacy actor text cannot establish identity and must not create duplicates.
+    final memberIds = rows(data, 'members')
+        .where((m) => m['organizationId'] == organizationId)
+        .map((m) => m['accountId'])
+        .toSet();
+    for (final account in rows(
       data,
-      'secrets',
-    ).where((s) => s['organizationId'] == organizationId).toList();
-    final names = <String, String>{'default': 'Default'};
-    final counts = <String, int>{'Default': 0};
+      'accounts',
+    ).where((a) => memberIds.contains(a['id']))) {
+      activityUsers['id:${account['id']}'] =
+          '${account['name']} (${account['email']})';
+    }
+    final secrets =
+        rows(
+              data,
+              'secrets',
+            )
+            .where(
+              (s) =>
+                  s['organizationId'] == organizationId &&
+                  access.canRead(s['project'] as String),
+            )
+            .toList();
+    final names = <String, String>{
+      if (access.canRead('Default')) 'default': 'Default',
+    };
+    final counts = <String, int>{if (access.canRead('Default')) 'Default': 0};
+    for (final project in rows(data, 'projects').where(
+      (project) =>
+          project['organizationId'] == organizationId &&
+          access.canRead(project['name'] as String),
+    )) {
+      final raw = project['name'] as String;
+      final name = names.putIfAbsent(raw.toLowerCase(), () => raw);
+      counts.putIfAbsent(name, () => 0);
+    }
     for (final secret in secrets) {
       final raw = secret['project'] as String;
       final name = names.putIfAbsent(raw.toLowerCase(), () => raw);
       counts[name] = (counts[name] ?? 0) + 1;
+    }
+    for (final name in counts.keys) {
+      activityProjects.putIfAbsent(name.toLowerCase(), () => name);
     }
     return WorkspaceSummary(
       secretCount: secrets.length,
@@ -84,11 +214,14 @@ class VaultService {
         data,
         'members',
       ).where((m) => m['organizationId'] == organizationId).length,
-      activityCount: rows(
-        data,
-        'events',
-      ).where((e) => e['organizationId'] == organizationId).length,
+      activityCount: events.length,
       projectCounts: counts,
+      filteredActivityCount: events.where(activityFilter.matches).length,
+      activityProjects: activityProjects.values.toList()
+        ..sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase())),
+      activityActions: events.map((e) => e['action'] as String).toSet().toList()
+        ..sort(),
+      activityUsers: activityUsers,
     );
   });
 
@@ -161,6 +294,35 @@ class VaultService {
       requireMembership(data, actor, organizationId, write: true);
       final secrets = rows(data, 'secrets');
       final previous = id == null ? null : _find(data, organizationId, id);
+      final access = ProjectAccess(data, actor, organizationId);
+      access.require(project, write: true);
+      final projectExists =
+          project.toLowerCase() == 'default' ||
+          // Existing selected grants can outlive pre-upgrade implicit projects.
+          (access.writeProjects?.any(
+                (p) => p.toLowerCase() == project.toLowerCase(),
+              ) ??
+              false) ||
+          rows(data, 'projects').any(
+            (p) =>
+                p['organizationId'] == organizationId &&
+                (p['name'] as String).toLowerCase() == project.toLowerCase(),
+          ) ||
+          secrets.any(
+            (s) =>
+                s['organizationId'] == organizationId &&
+                (s['project'] as String).toLowerCase() == project.toLowerCase(),
+          );
+      if (!projectExists && !access.canCreateProjects) {
+        throw VaultException(
+          message: 'You do not have permission to create projects.',
+        );
+      }
+      if (previous != null) {
+        access.require(previous['project'] as String, write: true);
+        _retainProject(data, organizationId, previous['project'] as String);
+      }
+      _retainProject(data, organizationId, project);
       if (previous == null && value == null) {
         throw VaultException(message: 'Enter a secret value.');
       }
@@ -294,99 +456,130 @@ class VaultService {
     });
   }
 
-  Future<String> reveal(String actor, String organizationId, String id) =>
-      store.write((data) async {
-        requireMembership(data, actor, organizationId);
-        final secret = _find(data, organizationId, id);
-        final value = await crypto.decrypt(
-          secret['ciphertext'] as String,
-          '$organizationId:$id',
-        );
-        recordEvent(
-          data,
-          actor,
-          organizationId,
-          'revealed',
-          secret['name'] as String,
-          secretId: id,
-          version: secret['version'] as int,
-        );
-        return value;
-      });
+  Future<String> reveal(String actor, String organizationId, String id) async {
+    _accessLimiter.consume(actor);
+    return store.write((data) async {
+      requireMembership(data, actor, organizationId);
+      final secret = _find(data, organizationId, id);
+      ProjectAccess(
+        data,
+        actor,
+        organizationId,
+      ).require(secret['project'] as String);
+      final value = await crypto.decrypt(
+        // Authorization precedes decryption and audit recording.
+        secret['ciphertext'] as String,
+        '$organizationId:$id',
+      );
+      recordEvent(
+        data,
+        actor,
+        organizationId,
+        'revealed',
+        secret['name'] as String,
+        secretId: id,
+        version: secret['version'] as int,
+      );
+      return value;
+    });
+  }
 
   Future<SecretFields> revealFields(
     String actor,
     String organizationId,
     String id,
-  ) => store.write((data) async {
-    requireMembership(data, actor, organizationId);
-    final secret = _find(data, organizationId, id);
-    final username = secret['usernameCiphertext'] as String?;
-    final result = SecretFields(
-      value: await crypto.decrypt(
-        secret['ciphertext'] as String,
-        '$organizationId:$id',
-      ),
-      username: username == null
-          ? null
-          : await crypto.decrypt(username, '$organizationId:$id:username'),
-    );
-    recordEvent(
-      data,
-      actor,
-      organizationId,
-      'revealed',
-      secret['name'] as String,
-      secretId: id,
-      version: secret['version'] as int,
-      details: username == null ? 'Field: value' : 'Fields: username, password',
-    );
-    return result;
-  });
+  ) async {
+    _accessLimiter.consume(actor);
+    return store.write((data) async {
+      requireMembership(data, actor, organizationId);
+      final secret = _find(data, organizationId, id);
+      ProjectAccess(
+        data,
+        actor,
+        organizationId,
+      ).require(secret['project'] as String);
+      final username = secret['usernameCiphertext'] as String?;
+      final result = SecretFields(
+        value: await crypto.decrypt(
+          secret['ciphertext'] as String,
+          '$organizationId:$id',
+        ),
+        username: username == null
+            ? null
+            : await crypto.decrypt(username, '$organizationId:$id:username'),
+      );
+      recordEvent(
+        data,
+        actor,
+        organizationId,
+        'revealed',
+        secret['name'] as String,
+        secretId: id,
+        version: secret['version'] as int,
+        details: username == null
+            ? 'Field: value'
+            : 'Fields: username, password',
+      );
+      return result;
+    });
+  }
 
   Future<SecretCopy> copy(
     String actor,
     String organizationId,
     String id, {
     String? field,
-  }) => store.write((data) async {
-    requireMembership(data, actor, organizationId);
-    final secret = _find(data, organizationId, id);
-    final selected = field ?? 'value';
-    if (!['value', 'username'].contains(selected)) {
-      throw VaultException(message: 'Choose a valid secret field.');
-    }
-    final ciphertext =
-        secret[selected == 'username' ? 'usernameCiphertext' : 'ciphertext']
-            as String?;
-    if (ciphertext == null) {
-      throw VaultException(message: 'This secret has no username.');
-    }
-    final value = await crypto.decrypt(
-      ciphertext,
-      selected == 'username'
-          ? '$organizationId:$id:username'
-          : '$organizationId:$id',
-    );
-    final eventId = recordEvent(
-      data,
-      actor,
-      organizationId,
-      'copy requested',
-      secret['name'] as String,
-      secretId: id,
-      version: secret['version'] as int,
-      details:
-          'Field: ${selected == 'value' && secret['kind'] == 'Username and password' ? 'password' : selected}',
-    );
-    return SecretCopy(eventId: eventId, value: value);
-  });
+  }) async {
+    _accessLimiter.consume(actor);
+    return store.write((data) async {
+      requireMembership(data, actor, organizationId);
+      final secret = _find(data, organizationId, id);
+      ProjectAccess(
+        data,
+        actor,
+        organizationId,
+      ).require(secret['project'] as String);
+      final selected = field ?? 'value';
+      if (!['value', 'username'].contains(selected)) {
+        throw VaultException(message: 'Choose a valid secret field.');
+      }
+      final ciphertext =
+          secret[selected == 'username' ? 'usernameCiphertext' : 'ciphertext']
+              as String?;
+      if (ciphertext == null) {
+        throw VaultException(message: 'This secret has no username.');
+      }
+      final value = await crypto.decrypt(
+        ciphertext,
+        selected == 'username'
+            ? '$organizationId:$id:username'
+            : '$organizationId:$id',
+      );
+      final eventId = recordEvent(
+        data,
+        actor,
+        organizationId,
+        'copy requested',
+        secret['name'] as String,
+        secretId: id,
+        version: secret['version'] as int,
+        details:
+            'Field: ${selected == 'value' && secret['kind'] == 'Username and password' ? 'password' : selected}',
+      );
+      return SecretCopy(eventId: eventId, value: value);
+    });
+  }
 
   Future<void> delete(String actor, String organizationId, String id) =>
       store.write((data) {
         requireMembership(data, actor, organizationId, write: true);
         final secret = _find(data, organizationId, id);
-        rows(data, 'secrets').remove(secret);
+        ProjectAccess(
+          data,
+          actor,
+          organizationId,
+        ).require(secret['project'] as String, write: true);
+        _retainProject(data, organizationId, secret['project'] as String);
         recordEvent(
           data,
           actor,
@@ -396,6 +589,7 @@ class VaultService {
           secretId: id,
           version: secret['version'] as int,
         );
+        rows(data, 'secrets').remove(secret);
       });
 
   Future<SecretView> setRotationRequired(
@@ -406,6 +600,11 @@ class VaultService {
   ) => store.write((data) {
     requireMembership(data, actor, organizationId, write: true);
     final secret = _find(data, organizationId, id);
+    ProjectAccess(
+      data,
+      actor,
+      organizationId,
+    ).require(secret['project'] as String, write: true);
     markSecretRotation(data, actor, secret, required);
     return view(secret);
   });

@@ -5,13 +5,14 @@ import 'package:serverpod_database/serverpod_database.dart';
 import 'package:synchronized/synchronized.dart';
 import 'sqlite_schema.dart';
 import 'sqlite_session.dart';
+import 'secret_activity_query.dart';
 import 'vault_store.dart';
 
 typedef VaultValidator = Future<void> Function(VaultData data);
 
-class SqliteVaultStore implements VaultStore {
+class SqliteVaultStore implements VaultStore, VaultQueryStore {
   SqliteVaultStore._(this._path, this._lockFile, this._session);
-  static const _schemaVersion = 6;
+  static const _schemaVersion = 11;
   static const _applicationId = 0x53504f44; // SPOD
   static final _openPaths = <String>{};
   final String _path;
@@ -80,6 +81,7 @@ class SqliteVaultStore implements VaultStore {
         }
       }
       initial.putIfAbsent('invitations', () => <Map<String, dynamic>>[]);
+      initial.putIfAbsent('projects', () => <Map<String, dynamic>>[]);
       validateVaultShape(initial);
       await validate(initial);
       await _db.unsafeExecute(
@@ -143,7 +145,12 @@ class SqliteVaultStore implements VaultStore {
           'ALTER TABLE vault_accounts ADD COLUMN invitationPolicy TEXT',
           transaction: tx,
         );
-        await _db.unsafeExecute(vaultTables.last.createSql, transaction: tx);
+        await _db.unsafeExecute(
+          vaultTables
+              .singleWhere((table) => table.collection == 'invitations')
+              .createSql,
+          transaction: tx,
+        );
         for (final index in vaultIndexes.skip(5)) {
           await _db.unsafeExecute(index, transaction: tx);
         }
@@ -159,6 +166,51 @@ class SqliteVaultStore implements VaultStore {
           'ALTER TABLE vault_secrets ADD COLUMN needsRotation INTEGER',
           transaction: tx,
         );
+      }
+      if (version < 7) {
+        await _db.unsafeExecute(
+          'ALTER TABLE vault_events ADD COLUMN project TEXT',
+          transaction: tx,
+        );
+      }
+      if (version < 8) {
+        await _db.unsafeExecute(
+          vaultTables
+              .singleWhere((table) => table.collection == 'projects')
+              .createSql,
+          transaction: tx,
+        );
+      }
+      if (version < 9) {
+        // Before v4 the invitations table is created above with current columns.
+        for (final table in ['members', if (version >= 4) 'invitations']) {
+          for (final column in ['readProjects', 'writeProjects']) {
+            await _db.unsafeExecute(
+              'ALTER TABLE vault_$table ADD COLUMN $column TEXT',
+              transaction: tx,
+            );
+          }
+        }
+      }
+      if (version < 10) {
+        await _db.unsafeExecute(
+          'ALTER TABLE vault_members ADD COLUMN accessDisabled INTEGER',
+          transaction: tx,
+        );
+      }
+      if (version < 11) {
+        for (final table in ['members', if (version >= 4) 'invitations']) {
+          for (final column in [
+            'deniedReadProjects TEXT',
+            'deniedWriteProjects TEXT',
+            'canCreateProjects INTEGER',
+          ]) {
+            await _db.unsafeExecute(
+              'ALTER TABLE vault_$table ADD COLUMN $column',
+              transaction: tx,
+            );
+          }
+        }
       }
       final data = await _load(tx);
       validateVaultShape(data);
@@ -273,6 +325,40 @@ class SqliteVaultStore implements VaultStore {
       );
     }
   }
+
+  @override
+  Future<Map<String, dynamic>?> readSession(
+    String digest,
+  ) => _mutex.synchronized(() async {
+    if (_closed) throw StateError('Vault is closed.');
+    final result = await _db.unsafeQuery(
+      'SELECT "accountId", "expiresAt" FROM vault_sessions WHERE "digest" = @digest LIMIT 1',
+      parameters: QueryParameters.named({'digest': digest}),
+    );
+    return result.isEmpty ? null : result.single.toColumnMap();
+  });
+
+  @override
+  Future<List<Map<String, dynamic>>> readSecretActivity(
+    String actor,
+    String organizationId,
+    String secretId, {
+    String? beforeEventId,
+    required int offset,
+    required int limit,
+  }) => _mutex.synchronized(() async {
+    if (_closed) throw StateError('Vault is closed.');
+    return _db.transaction(
+      (tx) => SecretActivityQuery(_db, tx).read(
+        actor,
+        organizationId,
+        secretId,
+        beforeEventId: beforeEventId,
+        offset: offset,
+        limit: limit,
+      ),
+    );
+  });
 
   @override
   Future<T> read<T>(T Function(VaultData data) operation) =>

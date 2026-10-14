@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:secretpod_client/secretpod_client.dart';
 import 'package:secretpod_flutter/main.dart';
 import 'package:secretpod_flutter/state/vault_controller.dart';
-import 'package:secretpod_flutter/screens/projects_screen.dart';
+import 'package:secretpod_flutter/screens/projects_dialog.dart';
 import 'package:secretpod_flutter/theme/app_theme.dart';
 
 void main() {
@@ -58,7 +58,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: ProjectsScreen(controller: controller, organizationId: 'o'),
+        home: ProjectsDialog(controller: controller, organizationId: 'o'),
       ),
     );
     await tester.scrollUntilVisible(find.text('Website'), 200);
@@ -93,7 +93,7 @@ void main() {
     );
     await tester.pumpWidget(
       MaterialApp(
-        home: ProjectsScreen(controller: controller, organizationId: 'o'),
+        home: ProjectsDialog(controller: controller, organizationId: 'o'),
       ),
     );
     expect(find.byType(ListTile).evaluate().length, lessThan(30));
@@ -129,7 +129,7 @@ void main() {
                 ).copyWith(textScaler: TextScaler.linear(2)),
                 child: child!,
               ),
-              home: ProjectsScreen(controller: controller, organizationId: 'o'),
+              home: ProjectsDialog(controller: controller, organizationId: 'o'),
             ),
           );
           await tester.pumpAndSettle();
@@ -154,10 +154,10 @@ void main() {
     await tester.tap(find.text('Projects'));
     await tester.pumpAndSettle();
     expect(find.text('Default'), findsOneWidget);
-    expect(find.text('0 secrets'), findsOneWidget);
+    expect(find.widgetWithText(ListTile, 'Default'), findsOneWidget);
     await tester.tap(find.text('Default'));
     await tester.pumpAndSettle();
-    expect(find.text('Project: default'), findsOneWidget);
+    expect(find.text('Project: Default'), findsOneWidget);
   });
   testWidgets('summary cards open projects and members and reset filters', (
     tester,
@@ -174,7 +174,7 @@ void main() {
     expect(find.text('STRIPE_API_KEY'), findsOneWidget);
     await tester.tap(find.text('Projects'));
     await tester.pumpAndSettle();
-    expect(find.byType(AppBar), findsOneWidget);
+    expect(find.byType(Dialog), findsOneWidget);
     await tester.tap(find.widgetWithText(ListTile, 'Payments'));
     await tester.pumpAndSettle();
     expect(find.text('STRIPE_API_KEY'), findsOneWidget);

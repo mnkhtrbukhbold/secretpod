@@ -33,11 +33,11 @@ dependencies:
     path: ../secretpod_client
   serverpod_flutter: 4.0.3
   web: ^1.1.1
+  http: ^1.6.0
 
 dev_dependencies:
   flutter_driver:
     sdk: flutter
-  http: ^1.6.0
   # Used for agents to drive the app through the Dart MCP
   flutter_lints: '>=3.0.0 <7.0.0'
   flutter_test:

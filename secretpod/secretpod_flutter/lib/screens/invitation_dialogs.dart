@@ -5,7 +5,7 @@ import '../state/vault_controller.dart';
 import '../state/invitation_link.dart';
 import '../widgets/common.dart';
 import '../widgets/dialog_shell.dart';
-import '../widgets/dropdown_field.dart';
+import '../widgets/member_access_fields.dart';
 
 class InviteMemberDialog extends StatefulWidget {
   const InviteMemberDialog({
@@ -22,7 +22,7 @@ class InviteMemberDialog extends StatefulWidget {
 class _InviteMemberDialogState extends State<InviteMemberDialog> {
   final _form = GlobalKey<FormState>();
   final _name = TextEditingController(), _email = TextEditingController();
-  String _role = 'reader';
+  MemberAccess _access = const MemberAccess();
   String? _error;
   bool _busy = false, _copied = false;
   InvitationCreated? _created;
@@ -46,7 +46,14 @@ class _InviteMemberDialogState extends State<InviteMemberDialog> {
         widget.organizationId,
         _email.text,
         _name.text,
-        _role,
+        _access.role,
+        readProjects: _access.readProjects,
+        writeProjects: _access.role == 'reader' ? [] : _access.writeProjects,
+        deniedReadProjects: _access.deniedReadProjects,
+        deniedWriteProjects: _access.role == 'reader'
+            ? []
+            : _access.deniedWriteProjects,
+        canCreateProjects: _access.allowsCreation,
       );
       if (mounted) setState(() => _created = result);
     } catch (e) {
@@ -142,20 +149,11 @@ class _InviteMemberDialogState extends State<InviteMemberDialog> {
                     : 'Enter a valid email address.',
               ),
               const SizedBox(height: 16),
-              SecretPodDropdown<String>(
-                initialValue: _role,
-                decoration: const InputDecoration(labelText: 'Access'),
-                items: const [
-                  DropdownMenuItem(
-                    value: 'reader',
-                    child: Text('Reader · view and copy'),
-                  ),
-                  DropdownMenuItem(
-                    value: 'editor',
-                    child: Text('Editor · manage secrets'),
-                  ),
-                ],
-                onChanged: (v) => setState(() => _role = v!),
+              MemberAccessFields(
+                initialValue: _access,
+                projects: widget.controller.projects,
+                enabled: !_busy,
+                onChanged: (value) => _access = value,
               ),
               const SizedBox(height: 16),
               Text(
@@ -257,7 +255,7 @@ class _AcceptInvitationDialogState extends State<AcceptInvitationDialog> {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Text(
-                'You will join as ${widget.invitation.role}. Paste the private link shared by ${widget.invitation.inviterName} to confirm this invitation.',
+                'You will join as ${widget.invitation.role}. ${accessDescription(widget.invitation.role, widget.invitation.readProjects, widget.invitation.writeProjects, deniedReadProjects: widget.invitation.deniedReadProjects, deniedWriteProjects: widget.invitation.deniedWriteProjects, canCreateProjects: widget.invitation.canCreateProjects)}\nPaste the private link shared by ${widget.invitation.inviterName} to confirm this invitation.',
               ),
               const SizedBox(height: 20),
               TextField(

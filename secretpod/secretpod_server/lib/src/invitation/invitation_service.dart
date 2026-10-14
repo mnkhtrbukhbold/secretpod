@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import '../account/account_service.dart';
 import '../crypto/crypto_service.dart';
@@ -63,8 +64,13 @@ class InvitationService {
     String organizationId,
     String email,
     String name,
-    String role,
-  ) {
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) {
     email = normalizedEmail(email);
     name = bounded(name, 'Recipient name', max: 80);
     if (!['reader', 'editor'].contains(role)) {
@@ -72,6 +78,16 @@ class InvitationService {
     }
     return store.write((data) {
       requireMembership(data, actor, organizationId, owner: true);
+      final scopes = validateProjectScopes(
+        data,
+        organizationId,
+        role,
+        readProjects,
+        writeProjects,
+        deniedReadProjects: deniedReadProjects,
+        deniedWriteProjects: deniedWriteProjects,
+        canCreateProjects: canCreateProjects,
+      );
       final sender = _account(data, actor);
       final recipient = rows(
         data,
@@ -157,6 +173,11 @@ class InvitationService {
         'recipientEmail': email,
         'recipientName': name,
         'role': role,
+        'readProjects': scopes.read == null ? null : jsonEncode(scopes.read),
+        'writeProjects': scopes.write == null ? null : jsonEncode(scopes.write),
+        'deniedReadProjects': jsonEncode(scopes.deniedRead),
+        'deniedWriteProjects': jsonEncode(scopes.deniedWrite),
+        'canCreateProjects': scopes.create ? 1 : 0,
         'tokenDigest': CryptoService.tokenDigest(token),
         'status': 'pending',
         'createdAt': now.toIso8601String(),
@@ -279,6 +300,11 @@ class InvitationService {
       'organizationId': invite['organizationId'],
       'accountId': account['id'],
       'role': invite['role'],
+      'readProjects': ?invite['readProjects'],
+      'writeProjects': ?invite['writeProjects'],
+      'deniedReadProjects': ?invite['deniedReadProjects'],
+      'deniedWriteProjects': ?invite['deniedWriteProjects'],
+      'canCreateProjects': ?invite['canCreateProjects'],
     });
     _finish(data, invite, 'accepted', actor: account['id'] as String);
   }
@@ -365,6 +391,11 @@ class InvitationService {
         recipientEmail: i['recipientEmail'] as String,
         recipientName: i['recipientName'] as String,
         role: i['role'] as String,
+        readProjects: projectScope(i, 'readProjects'),
+        writeProjects: projectScope(i, 'writeProjects'),
+        deniedReadProjects: projectScope(i, 'deniedReadProjects'),
+        deniedWriteProjects: projectScope(i, 'deniedWriteProjects'),
+        canCreateProjects: projectCreationAllowed(i),
         status: _status(i),
         createdAt: DateTime.parse(i['createdAt'] as String),
         expiresAt: DateTime.parse(i['expiresAt'] as String),

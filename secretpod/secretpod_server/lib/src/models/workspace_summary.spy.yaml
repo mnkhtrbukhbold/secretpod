@@ -5,3 +5,7 @@ fields:
   memberCount: int
   activityCount: int
   projectCounts: Map<String, int>
+  filteredActivityCount: int?
+  activityProjects: List<String>?
+  activityActions: List<String>?
+  activityUsers: Map<String, String>?

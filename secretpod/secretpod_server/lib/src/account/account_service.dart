@@ -6,38 +6,55 @@ import '../storage/vault_store.dart';
 import '../validation.dart';
 
 class AccountService {
-  AccountService(this.store);
+  AccountService(this.store, {DateTime Function()? now})
+    : _now = now ?? DateTime.now;
   final VaultStore store;
+  final DateTime Function() _now;
   final _attempts = <String, List<DateTime>>{};
   final _globalAttempts = <DateTime>[];
   int _activeHashes = 0;
   static const _uuid = Uuid();
 
   void _limit(String email) {
-    final cutoff = DateTime.now().toUtc().subtract(const Duration(minutes: 15));
-    _attempts.removeWhere((_, times) => times.every((t) => t.isBefore(cutoff)));
-    final attempts = _attempts.putIfAbsent(email, () => []);
-    attempts.removeWhere((t) => t.isBefore(cutoff));
-    _globalAttempts.removeWhere(
-      (t) => t.isBefore(
-        DateTime.now().toUtc().subtract(const Duration(minutes: 1)),
-      ),
-    );
-    if (attempts.length >= 10 ||
-        _globalAttempts.length >= 60 ||
-        _activeHashes >= 4) {
+    final now = _now().toUtc();
+    final cutoff = now.subtract(const Duration(minutes: 15));
+    _attempts.removeWhere((_, times) => !times.last.isAfter(cutoff));
+    final attempts = _attempts[email] ?? <DateTime>[];
+    attempts.removeWhere((t) => !t.isAfter(cutoff));
+    final globalCutoff = now.subtract(const Duration(minutes: 1));
+    _globalAttempts.removeWhere((t) => !t.isAfter(globalCutoff));
+    DateTime? retryAt;
+    if (attempts.length >= 10) {
+      retryAt = attempts.first.add(const Duration(minutes: 15));
+    }
+    if (_globalAttempts.length >= 60) {
+      final globalRetry = _globalAttempts.first.add(const Duration(minutes: 1));
+      if (retryAt == null || globalRetry.isAfter(retryAt)) {
+        retryAt = globalRetry;
+      }
+    }
+    if (retryAt != null) {
+      final seconds = (retryAt.difference(now).inMicroseconds / 1000000).ceil();
       throw VaultException(
-        message: 'Too many attempts. Please try again later.',
+        message: 'Too many attempts. Try again in $seconds seconds.',
       );
     }
-    attempts.add(DateTime.now().toUtc());
-    _globalAttempts.add(DateTime.now().toUtc());
+    if (_activeHashes >= 4) {
+      throw VaultException(
+        message: 'Too many attempts. Try again in 1 second.',
+      );
+    }
+    // Insert only admitted requests. The global limit bounds the number of
+    // email keys retained; denied requests must not allocate new empty buckets.
+    attempts.add(now);
+    _attempts[email] = attempts;
+    _globalAttempts.add(now);
   }
 
   Future<String> _hash(String password, String salt) async {
     if (_activeHashes >= 4) {
       throw VaultException(
-        message: 'Too many attempts. Please try again later.',
+        message: 'Too many attempts. Try again in 1 second.',
       );
     }
     _activeHashes++;
@@ -85,7 +102,7 @@ class AccountService {
 
   Future<AuthResult> login(String email, String password) async {
     email = normalizedEmail(email);
-    if (password.length > 256) {
+    if (password.isEmpty || password.length > 256) {
       throw VaultException(message: 'Invalid email or password.');
     }
     _limit(email);
@@ -104,7 +121,6 @@ class AccountService {
         )) {
       throw VaultException(message: 'Invalid email or password.');
     }
-    _attempts.remove(email);
     return store.write((data) {
       final current = _account(data, account['id'] as String);
       if (!_sameCredentials(current, account) || current['email'] != email) {
@@ -251,19 +267,21 @@ class AccountService {
   Future<String?> authenticate(String token) async {
     if (token.length != 44) return null;
     final digest = CryptoService.tokenDigest(token);
-    return store.read((data) {
-      final session = rows(
-        data,
-        'sessions',
-      ).where((s) => s['digest'] == digest).firstOrNull;
-      if (session == null ||
-          !DateTime.parse(
-            session['expiresAt'] as String,
-          ).isAfter(DateTime.now().toUtc())) {
-        return null;
-      }
-      return session['accountId'] as String;
-    });
+    final session = store is VaultQueryStore
+        ? await (store as VaultQueryStore).readSession(digest)
+        : await store.read(
+            (data) => rows(
+              data,
+              'sessions',
+            ).where((s) => s['digest'] == digest).firstOrNull,
+          );
+    if (session == null ||
+        !DateTime.parse(
+          session['expiresAt'] as String,
+        ).isAfter(DateTime.now().toUtc())) {
+      return null;
+    }
+    return session['accountId'] as String;
   }
 
   Future<void> logout(String token) =>

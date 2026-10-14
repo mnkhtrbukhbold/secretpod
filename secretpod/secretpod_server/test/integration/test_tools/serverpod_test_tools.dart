@@ -362,8 +362,13 @@ class _InvitationEndpoint {
     String organizationId,
     String email,
     String name,
-    String role,
-  ) async {
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) async {
     return _ist.callAwaitableFunctionAndHandleExceptions(() async {
       var _localUniqueSession =
           (sessionBuilder as _ist.InternalTestSessionBuilder).internalBuild(
@@ -380,6 +385,11 @@ class _InvitationEndpoint {
             'email': email,
             'name': name,
             'role': role,
+            'readProjects': readProjects,
+            'writeProjects': writeProjects,
+            'deniedReadProjects': deniedReadProjects,
+            'deniedWriteProjects': deniedWriteProjects,
+            'canCreateProjects': canCreateProjects,
           }),
           serializationManager: _serializationManager,
         );
@@ -850,6 +860,41 @@ class _VaultEndpoint {
     });
   }
 
+  _ida.Future<String> createProject(
+    _ist.TestSessionBuilder sessionBuilder,
+    String organizationId,
+    String name,
+  ) async {
+    return _ist.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _ist.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'vault',
+            method: 'createProject',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'vault',
+          methodName: 'createProject',
+          parameters: _ist.testObjectToJson({
+            'organizationId': organizationId,
+            'name': name,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _ida.Future<String>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
   _ida.Future<_i59nqxt4.OrganizationView> renameOrganization(
     _ist.TestSessionBuilder sessionBuilder,
     String organizationId,
@@ -959,6 +1004,53 @@ class _VaultEndpoint {
     });
   }
 
+  _ida.Future<_ivfywoed.MemberView> updateMemberAccess(
+    _ist.TestSessionBuilder sessionBuilder,
+    String organizationId,
+    String accountId,
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) async {
+    return _ist.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _ist.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'vault',
+            method: 'updateMemberAccess',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'vault',
+          methodName: 'updateMemberAccess',
+          parameters: _ist.testObjectToJson({
+            'organizationId': organizationId,
+            'accountId': accountId,
+            'role': role,
+            'readProjects': readProjects,
+            'writeProjects': writeProjects,
+            'deniedReadProjects': deniedReadProjects,
+            'deniedWriteProjects': deniedWriteProjects,
+            'canCreateProjects': canCreateProjects,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _ida.Future<_ivfywoed.MemberView>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
   _ida.Future<List<_irfersm6.SecretView>> memberRemovalSecrets(
     _ist.TestSessionBuilder sessionBuilder,
     String organizationId,
@@ -1034,6 +1126,49 @@ class _VaultEndpoint {
                   _localCallContext.arguments,
                 )
                 as _ida.Future<void>);
+        return _localReturnValue;
+      } finally {
+        await _localUniqueSession.close();
+      }
+    });
+  }
+
+  _ida.Future<_ivfywoed.MemberView> setMemberEnabled(
+    _ist.TestSessionBuilder sessionBuilder,
+    String organizationId,
+    String accountId,
+    bool enabled,
+    List<String> reviewedSecretIds,
+    List<String> rotateSecretIds, {
+    int? utcOffsetMinutes,
+  }) async {
+    return _ist.callAwaitableFunctionAndHandleExceptions(() async {
+      var _localUniqueSession =
+          (sessionBuilder as _ist.InternalTestSessionBuilder).internalBuild(
+            endpoint: 'vault',
+            method: 'setMemberEnabled',
+          );
+      try {
+        var _localCallContext = await _endpointDispatch.getMethodCallContext(
+          createSessionCallback: (_) => _localUniqueSession,
+          endpointPath: 'vault',
+          methodName: 'setMemberEnabled',
+          parameters: _ist.testObjectToJson({
+            'organizationId': organizationId,
+            'accountId': accountId,
+            'enabled': enabled,
+            'reviewedSecretIds': reviewedSecretIds,
+            'rotateSecretIds': rotateSecretIds,
+            'utcOffsetMinutes': utcOffsetMinutes,
+          }),
+          serializationManager: _serializationManager,
+        );
+        var _localReturnValue =
+            await (_localCallContext.method.call(
+                  _localUniqueSession,
+                  _localCallContext.arguments,
+                )
+                as _ida.Future<_ivfywoed.MemberView>);
         return _localReturnValue;
       } finally {
         await _localUniqueSession.close();
@@ -1127,6 +1262,11 @@ class _VaultEndpoint {
     String? query,
     String? project,
     String? environment,
+    DateTime? activityFrom,
+    DateTime? activityUntil,
+    String? activityProject,
+    String? activityAction,
+    String? activityUser,
   }) async {
     return _ist.callAwaitableFunctionAndHandleExceptions(() async {
       var _localUniqueSession =
@@ -1144,6 +1284,11 @@ class _VaultEndpoint {
             'query': query,
             'project': project,
             'environment': environment,
+            'activityFrom': activityFrom,
+            'activityUntil': activityUntil,
+            'activityProject': activityProject,
+            'activityAction': activityAction,
+            'activityUser': activityUser,
           }),
           serializationManager: _serializationManager,
         );
@@ -1325,6 +1470,11 @@ class _VaultEndpoint {
     String organizationId, {
     int? offset,
     int? limit,
+    DateTime? from,
+    DateTime? until,
+    String? project,
+    String? action,
+    String? user,
   }) async {
     return _ist.callAwaitableFunctionAndHandleExceptions(() async {
       var _localUniqueSession =
@@ -1341,6 +1491,11 @@ class _VaultEndpoint {
             'organizationId': organizationId,
             'offset': offset,
             'limit': limit,
+            'from': from,
+            'until': until,
+            'project': project,
+            'action': action,
+            'user': user,
           }),
           serializationManager: _serializationManager,
         );

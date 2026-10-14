@@ -7,12 +7,16 @@ import 'package:http/testing.dart';
 import 'package:secretpod_client/secretpod_client.dart';
 import 'package:secretpod_flutter/screens/workspace_screen.dart';
 import 'package:secretpod_flutter/state/vault_controller.dart';
+import 'package:secretpod_flutter/main.dart';
+import 'package:secretpod_flutter/screens/secret_dialogs.dart';
 
 void main() {
   late VaultController controller;
   late List<SecretView> exposed;
   Map<String, dynamic>? submitted;
+  Map<String, dynamic>? accessSubmitted;
   bool failPreview = false;
+  bool denyAfterOverview = false;
   Completer<void>? removalGate;
   final owner = MemberView(
     account: AccountView(
@@ -40,7 +44,9 @@ void main() {
   );
   setUp(() {
     submitted = null;
+    accessSubmitted = null;
     failPreview = false;
+    denyAfterOverview = false;
     removalGate = null;
     exposed = [secret('one', 'API key'), secret('two', 'Password')];
     controller =
@@ -52,6 +58,62 @@ void main() {
                 final method = request.url.path.split('/').last;
                 final args = jsonDecode(request.body) as Map<String, dynamic>;
                 switch (method) {
+                  case 'organizations':
+                    return http.Response(
+                      jsonEncode(
+                        accessSubmitted == null && !denyAfterOverview
+                            ? []
+                            : controller.organizations
+                                  .map((o) => o.toJson())
+                                  .toList(),
+                      ),
+                      200,
+                    );
+                  case 'members':
+                    return http.Response(
+                      jsonEncode(
+                        controller.members.map((m) => m.toJson()).toList(),
+                      ),
+                      200,
+                    );
+                  case 'summary':
+                    if (denyAfterOverview) {
+                      return http.Response(
+                        Protocol().encodeWithType(
+                          VaultException(
+                            message: 'Organization access denied.',
+                          ),
+                        ),
+                        500,
+                      );
+                    }
+                    return http.Response(
+                      jsonEncode(
+                        WorkspaceSummary(
+                          secretCount: 0,
+                          filteredSecretCount: 0,
+                          memberCount: 2,
+                          activityCount: 0,
+                          projectCounts: {},
+                        ).toJson(),
+                      ),
+                      200,
+                    );
+                  case 'profile':
+                    return http.Response(
+                      jsonEncode(controller.account!.toJson()),
+                      200,
+                    );
+                  case 'setMemberEnabled':
+                    accessSubmitted = args;
+                    await removalGate?.future;
+                    return http.Response(
+                      jsonEncode(
+                        member.toJson()
+                          ..['accessDisabled'] = !(args['enabled'] as bool),
+                      ),
+                      200,
+                    );
                   case 'memberRemovalSecrets':
                     if (failPreview) return http.Response('Unavailable', 503);
                     final offset = args['offset'] as int? ?? 0;
@@ -87,6 +149,161 @@ void main() {
     controller.organizations = [controller.organization!];
   });
   tearDown(() => controller.dispose());
+
+  testWidgets(
+    'owner can disable after secret review without removing membership',
+    (tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceScreen(
+            controller: controller,
+            page: 2,
+            lastWorkspacePage: 2,
+            onNavigate: (_) {},
+          ),
+        ),
+      );
+      await tester.ensureVisible(find.byTooltip('Disable access for Alex'));
+      await tester.tap(find.byTooltip('Disable access for Alex'));
+      await tester.pumpAndSettle();
+      expect(find.text('Disable access?'), findsOneWidget);
+      expect(find.text('Secret one'), findsOneWidget);
+      await tester.ensureVisible(find.byKey(const ValueKey('rotate-two')));
+      await tester.tap(find.byKey(const ValueKey('rotate-two')));
+      await tester.tap(find.widgetWithText(FilledButton, 'Disable access'));
+      await tester.pumpAndSettle();
+      expect(accessSubmitted!['enabled'], false);
+      expect(accessSubmitted!['rotateSecretIds'], ['one']);
+      expect(submitted, isNull);
+      expect(
+        controller.members
+            .firstWhere((m) => m.account.id == 'member')
+            .toJson()['accessDisabled'],
+        true,
+      );
+      expect(controller.members, hasLength(2));
+    },
+  );
+
+  testWidgets(
+    'disabled member stays visible and owner can reenable preserved access',
+    (tester) async {
+      controller.members = [
+        owner,
+        MemberView.fromJson(member.toJson()..['accessDisabled'] = true),
+      ];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: WorkspaceScreen(
+            controller: controller,
+            page: 2,
+            lastWorkspacePage: 2,
+            onNavigate: (_) {},
+          ),
+        ),
+      );
+      expect(find.text('Access disabled'), findsOneWidget);
+      await tester.ensureVisible(find.byTooltip('Enable access for Alex'));
+      await tester.tap(find.byTooltip('Enable access for Alex'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enable access?'), findsOneWidget);
+      await tester.tap(find.widgetWithText(FilledButton, 'Enable access'));
+      await tester.pumpAndSettle();
+      expect(accessSubmitted!['enabled'], true);
+      expect(accessSubmitted!['rotateSecretIds'], isEmpty);
+      expect(
+        controller.members
+            .firstWhere((m) => m.account.id == 'member')
+            .toJson()['accessDisabled'],
+        false,
+      );
+    },
+  );
+
+  testWidgets(
+    'losing organization access closes open secret details on refresh',
+    (tester) async {
+      controller.account = member.account;
+      controller.organization = controller.organization!.copyWith(
+        role: 'reader',
+      );
+      controller.organizations = [controller.organization!];
+      controller.secrets = exposed;
+      await tester.pumpWidget(MyApp(controller: controller));
+      unawaited(
+        showDialog<void>(
+          context: tester.element(find.byType(WorkspaceScreen)),
+          builder: (_) =>
+              SecretDetails(controller: controller, secret: exposed.first),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(SecretDetails), findsOneWidget);
+      await controller.refresh();
+      await tester.pumpAndSettle();
+      expect(controller.organization, isNull);
+      expect(controller.secrets, isEmpty);
+      expect(find.byType(SecretDetails), findsNothing);
+      expect(find.text('Team'), findsNothing);
+    },
+  );
+
+  test(
+    'delayed disable never updates a different account or organization',
+    () async {
+      removalGate = Completer<void>();
+      final operation = controller.setMemberEnabled(
+        'org',
+        'member',
+        false,
+        ['one'],
+        ['one'],
+      );
+      while (accessSubmitted == null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      controller.account = member.account;
+      controller.auth.token = 'new-session';
+      controller.members = [member];
+      controller.secrets = exposed;
+      removalGate!.complete();
+      await operation;
+      expect(controller.members.single.accessDisabled, isFalse);
+      expect(controller.secrets.any((s) => s.needsRotation), isFalse);
+    },
+  );
+
+  testWidgets(
+    'access denied after overview clears cached organization and open secrets',
+    (tester) async {
+      denyAfterOverview = true;
+      controller.account = member.account;
+      controller.organization = controller.organization!.copyWith(
+        role: 'reader',
+      );
+      controller.organizations = [controller.organization!];
+      controller.secrets = exposed;
+      await tester.pumpWidget(MyApp(controller: controller));
+      unawaited(
+        showDialog<void>(
+          context: tester.element(find.byType(WorkspaceScreen)),
+          builder: (_) =>
+              SecretDetails(controller: controller, secret: exposed.first),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(SecretDetails), findsOneWidget);
+      await controller.refresh();
+      await tester.pumpAndSettle();
+      expect(controller.organization, isNull);
+      expect(controller.organizations, isEmpty);
+      expect(controller.error, 'Organization access denied.');
+      expect(controller.secrets, isEmpty);
+      expect(controller.members, isEmpty);
+      expect(find.byType(SecretDetails), findsNothing);
+      expect(find.text('Team'), findsNothing);
+    },
+  );
 
   test(
     'delayed removal does not decrement an already refreshed member count',
@@ -142,6 +359,8 @@ void main() {
         ),
       ),
     );
+    await tester.ensureVisible(find.byTooltip('Remove Alex'));
+    await tester.ensureVisible(find.byTooltip('Remove Alex'));
     await tester.tap(find.byTooltip('Remove Alex'));
     await tester.pumpAndSettle();
   }
@@ -275,5 +494,7 @@ void main() {
       ),
     );
     expect(find.byTooltip('Remove Alex'), findsNothing);
+    expect(find.byTooltip('Disable access for Alex'), findsNothing);
+    expect(find.byTooltip('Enable access for Alex'), findsNothing);
   });
 }

@@ -29,7 +29,9 @@ void main() {
   var confirmations = 0;
   var historyRequests = 0;
   var historyCount = 1;
+  var reveals = 0;
   setUp(() {
+    reveals = 0;
     steps.clear();
     clipboardFails = confirmationFails = historyFails = copied = requested =
         false;
@@ -40,11 +42,15 @@ void main() {
       'http://localhost/',
       httpClientOverride: MockClient((request) async {
         final args = jsonDecode(request.body) as Map<String, dynamic>;
+        if (request.url.path.endsWith('/revealSecret')) {
+          reveals++;
+          return http.Response(jsonEncode('revealed-value'), 200);
+        }
         if (request.url.path.endsWith('/secretActivity')) {
           historyRequests++;
           expect(args['organizationId'], 'org');
           expect(args['secretId'], 's1');
-          expect(args['limit'], 10);
+          expect(args['limit'], 11);
           if (historyFails) return http.Response('', 503);
           return http.Response(
             jsonEncode([
@@ -137,6 +143,36 @@ void main() {
     await tester.tap(find.widgetWithText(Tab, 'Activity'));
     await tester.pumpAndSettle();
   }
+
+  testWidgets(
+    'reveal cooldown blocks repeated requests but allows immediate hiding',
+    (tester) async {
+      await open(tester);
+      final reveal = tester
+          .widget<OutlinedButton>(
+            find.widgetWithText(OutlinedButton, 'Reveal value'),
+          )
+          .onPressed!;
+      reveal();
+      reveal(); // A second event before the widget has rebuilt.
+      await tester.pumpAndSettle();
+      expect(reveals, 1);
+      await tester.tap(find.text('Hide value'));
+      await tester.pump();
+      expect(find.text('revealed-value'), findsNothing);
+      final button = tester.widget<OutlinedButton>(
+        find.widgetWithIcon(OutlinedButton, Icons.visibility_outlined),
+      );
+      expect(button.onPressed, isNull);
+      await tester.pump(const Duration(seconds: 2));
+      await tester.tap(find.text('Reveal value'));
+      await tester.pumpAndSettle();
+      expect(reveals, 2);
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(seconds: 31));
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('details open first and activity loads only in its tab', (
     tester,

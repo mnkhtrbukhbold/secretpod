@@ -11,15 +11,18 @@ class ProfileSettingsScreen extends StatefulWidget {
     super.key,
     required this.controller,
     required this.onSignOut,
+    this.openInvitationPreferences = false,
   });
   final VaultController controller;
   final VoidCallback onSignOut;
+  final bool openInvitationPreferences;
   @override
   State<ProfileSettingsScreen> createState() => _ProfileSettingsScreenState();
 }
 
 class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   final _form = GlobalKey<FormState>();
+  final _invitationPreferences = GlobalKey();
   late final _name = TextEditingController(
     text: widget.controller.account!.name,
   );
@@ -27,6 +30,18 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
   bool _busy = false;
   String? _notice, _error;
   int _errorRevision = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.openInvitationPreferences) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        final section = _invitationPreferences.currentContext;
+        if (section != null) Scrollable.ensureVisible(section);
+      });
+    }
+  }
 
   @override
   void didUpdateWidget(covariant ProfileSettingsScreen oldWidget) {
@@ -224,6 +239,7 @@ class _ProfileSettingsScreenState extends State<ProfileSettingsScreen> {
             const SizedBox(height: 20),
             _section(context, [
               InvitationPreferences(
+                key: _invitationPreferences,
                 controller: widget.controller,
                 enabled: !_busy,
               ),

@@ -19,11 +19,25 @@ class SecretEditor extends StatefulWidget {
 class _SecretEditorState extends State<SecretEditor> {
   final _form = GlobalKey<FormState>();
   late final _name = TextEditingController(text: widget.secret?.name);
-  late String _project = widget.secret?.project ?? 'Default';
+  late final _initialProject =
+      widget.secret?.project ??
+      widget.controller.writableProjects
+          .where(
+            (name) =>
+                name.toLowerCase() ==
+                widget.controller.secretProject?.toLowerCase(),
+          )
+          .firstOrNull ??
+      widget.controller.writableProjects.firstOrNull ??
+      'Default';
+  late String _project = _initialProject;
   final _addedProjects = <String>[];
   List<String> get _projects {
     final names = <String, String>{
-      for (final name in [...widget.controller.projects, ..._addedProjects])
+      for (final name in [
+        ...widget.controller.writableProjects,
+        ..._addedProjects,
+      ])
         name.toLowerCase(): name,
     };
     final original = widget.secret?.project;
@@ -50,7 +64,7 @@ class _SecretEditorState extends State<SecretEditor> {
 
   bool get _hasChanges =>
       _name.text != (widget.secret?.name ?? '') ||
-      _project != (widget.secret?.project ?? 'Default') ||
+      _project != _initialProject ||
       _description.text != (widget.secret?.description ?? '') ||
       _url.text != (widget.secret?.url ?? '') ||
       _value.text.isNotEmpty ||
@@ -245,7 +259,9 @@ class _SecretEditorState extends State<SecretEditor> {
                     : (value) => setState(() => _project = value!),
               ),
               TextButton.icon(
-                onPressed: _busy ? null : _addProject,
+                onPressed: _busy || !widget.controller.canCreateProject
+                    ? null
+                    : _addProject,
                 icon: const Icon(Icons.add, size: 18),
                 label: const Text('New project'),
               ),
@@ -501,9 +517,12 @@ class _SecretDetailsState extends State<SecretDetails> {
   bool _busy = false;
   bool get _credential => widget.secret.kind == 'Username and password';
   Timer? _hideTimer;
+  Timer? _revealCooldownTimer;
+  int _revealCooldownSeconds = 0;
   @override
   void dispose() {
     _hideTimer?.cancel();
+    _revealCooldownTimer?.cancel();
     _scrollController.dispose();
     _value = null;
     _username = null;
@@ -519,6 +538,7 @@ class _SecretDetailsState extends State<SecretDetails> {
       });
       return;
     }
+    if (_busy || _revealCooldownSeconds > 0) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -556,11 +576,23 @@ class _SecretDetailsState extends State<SecretDetails> {
     } catch (e) {
       if (mounted) setState(() => _error = VaultController.describeError(e));
     } finally {
-      if (mounted) setState(() => _busy = false);
+      if (mounted) {
+        setState(() {
+          _busy = false;
+          _revealCooldownSeconds = 2;
+        });
+        _revealCooldownTimer = Timer.periodic(const Duration(seconds: 1), (
+          timer,
+        ) {
+          setState(() => _revealCooldownSeconds--);
+          if (_revealCooldownSeconds == 0) timer.cancel();
+        });
+      }
     }
   }
 
   Future<void> _copy([String field = 'value']) async {
+    if (_busy || _pendingCopyId != null) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -610,7 +642,7 @@ class _SecretDetailsState extends State<SecretDetails> {
 
   Future<void> _retryConfirmation() async {
     final eventId = _pendingCopyId;
-    if (eventId == null) return;
+    if (_busy || eventId == null) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -752,7 +784,7 @@ class _SecretDetailsState extends State<SecretDetails> {
           },
         ),
         actions: [
-          if (widget.controller.canEdit) ...[
+          if (widget.controller.canWriteProject(secret.project)) ...[
             TextButton.icon(
               onPressed: _busy ? null : _delete,
               style: TextButton.styleFrom(
@@ -894,7 +926,10 @@ class _SecretDetailsState extends State<SecretDetails> {
                 runSpacing: 8,
                 children: [
                   OutlinedButton.icon(
-                    onPressed: _busy ? null : _reveal,
+                    onPressed:
+                        _value == null && (_busy || _revealCooldownSeconds > 0)
+                        ? null
+                        : _reveal,
                     icon: Icon(
                       _value == null
                           ? Icons.visibility_outlined
@@ -902,8 +937,12 @@ class _SecretDetailsState extends State<SecretDetails> {
                       size: 18,
                     ),
                     label: Text(
-                      _busy
+                      _value != null
+                          ? (_credential ? 'Hide credentials' : 'Hide value')
+                          : _busy
                           ? 'Loading…'
+                          : _revealCooldownSeconds > 0
+                          ? 'Reveal in ${_revealCooldownSeconds}s'
                           : (_credential
                                 ? (_value == null
                                       ? 'Reveal credentials'
@@ -971,7 +1010,7 @@ class _SecretDetailsState extends State<SecretDetails> {
                 const SizedBox(height: 12),
               ],
               ExpiryLabel(secret.expiresAt),
-              if (widget.controller.canEdit) ...[
+              if (widget.controller.canWriteProject(secret.project)) ...[
                 const SizedBox(height: 12),
                 TextButton.icon(
                   onPressed: _busy ? null : _setRotationFlag,

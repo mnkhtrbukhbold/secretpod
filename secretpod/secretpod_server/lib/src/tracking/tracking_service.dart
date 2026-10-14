@@ -3,6 +3,7 @@ import '../generated/protocol.dart';
 import '../organization/access.dart';
 import '../storage/vault_store.dart';
 import '../paging.dart';
+import 'activity_filter.dart';
 
 String recordEvent(
   VaultData data,
@@ -13,9 +14,22 @@ String recordEvent(
   String? secretId,
   int? version,
   String? details,
+  String? project,
 }) {
   final account = rows(data, 'accounts').firstWhere((a) => a['id'] == actor);
   final id = const Uuid().v4();
+  final projectSnapshot =
+      project ??
+      (secretId == null
+          ? null
+          : rows(data, 'secrets')
+                    .where(
+                      (s) =>
+                          s['id'] == secretId &&
+                          s['organizationId'] == organizationId,
+                    )
+                    .firstOrNull?['project']
+                as String?);
   rows(data, 'events').add({
     'id': id,
     'organizationId': organizationId,
@@ -27,6 +41,7 @@ String recordEvent(
     'secretId': ?secretId,
     'version': ?version,
     'details': ?details,
+    'project': ?projectSnapshot,
   });
   return id;
 }
@@ -39,14 +54,31 @@ class TrackingService {
     String organizationId, {
     int offset = 0,
     int limit = Pagination.defaultLimit,
+    DateTime? from,
+    DateTime? until,
+    String? project,
+    String? action,
+    String? user,
   }) => store.read((data) {
-    requireMembership(data, actor, organizationId);
+    final access = ProjectAccess(data, actor, organizationId);
+    final filter = ActivityFilter(
+      from: from,
+      until: until,
+      project: project,
+      action: action,
+      user: user,
+    );
     return Pagination(offset: offset, limit: limit)
         .apply(
           rows(
             data,
             'events',
-          ).reversed.where((e) => e['organizationId'] == organizationId),
+          ).reversed.where(
+            (e) =>
+                e['organizationId'] == organizationId &&
+                access.canReadEvent(data, e) &&
+                filter.matches(e),
+          ),
         )
         .map(_view)
         .toList();
@@ -59,38 +91,55 @@ class TrackingService {
     String? beforeEventId,
     int offset = 0,
     int limit = Pagination.defaultLimit,
-  }) => store.read((data) {
-    requireMembership(data, actor, organizationId);
-    final paging = Pagination(offset: offset, limit: limit);
-    if (beforeEventId != null && offset != 0) {
-      throw VaultException(
-        message: 'Use either an activity cursor or an offset, not both.',
-      );
+  }) async {
+    if (store case final VaultQueryStore queries) {
+      return (await queries.readSecretActivity(
+        actor,
+        organizationId,
+        secretId,
+        beforeEventId: beforeEventId,
+        offset: offset,
+        limit: limit,
+      )).map(_view).toList();
     }
-    if (!rows(data, 'secrets').any(
-      (s) => s['id'] == secretId && s['organizationId'] == organizationId,
-    )) {
-      throw VaultException(message: 'Secret not found.');
-    }
-    final events = rows(data, 'events').reversed
-        .where(
-          (e) =>
-              e['organizationId'] == organizationId &&
-              e['secretId'] == secretId,
-        )
-        .toList();
-    var start = 0;
-    if (beforeEventId != null) {
-      final index = events.indexWhere((e) => e['id'] == beforeEventId);
-      if (index < 0) {
+    return store.read((data) {
+      final access = ProjectAccess(data, actor, organizationId);
+      final paging = Pagination(offset: offset, limit: limit);
+      if (beforeEventId != null && offset != 0) {
         throw VaultException(
-          message: 'Activity page not found. Refresh the history.',
+          message: 'Use either an activity cursor or an offset, not both.',
         );
       }
-      start = index + 1;
-    }
-    return paging.apply(events.skip(start)).map(_view).toList();
-  });
+      if (!rows(data, 'secrets').any(
+        (s) => s['id'] == secretId && s['organizationId'] == organizationId,
+      )) {
+        throw VaultException(message: 'Secret not found.');
+      }
+      final secret = rows(data, 'secrets').firstWhere(
+        (s) => s['id'] == secretId && s['organizationId'] == organizationId,
+      );
+      access.require(secret['project'] as String);
+      final events = rows(data, 'events').reversed
+          .where(
+            (e) =>
+                e['organizationId'] == organizationId &&
+                e['secretId'] == secretId &&
+                access.canReadEvent(data, e),
+          )
+          .toList();
+      var start = 0;
+      if (beforeEventId != null) {
+        final index = events.indexWhere((e) => e['id'] == beforeEventId);
+        if (index < 0) {
+          throw VaultException(
+            message: 'Activity page not found. Refresh the history.',
+          );
+        }
+        start = index + 1;
+      }
+      return paging.apply(events.skip(start)).map(_view).toList();
+    });
+  }
 
   Future<void> confirmCopy(
     String actor,
@@ -110,6 +159,9 @@ class TrackingService {
         )
         .firstOrNull;
     if (event == null) throw VaultException(message: 'Copy request not found.');
+    if (!ProjectAccess(data, actor, organizationId).canReadEvent(data, event)) {
+      throw VaultException(message: 'Project access denied.');
+    }
     // Idempotent acknowledgment by the authenticated app, never a claim that
     // the server can inspect a remote operating system's clipboard.
     event['action'] = 'copied';

@@ -15,13 +15,23 @@ class InvitationEndpoint extends Endpoint {
     String organizationId,
     String email,
     String name,
-    String role,
-  ) => VaultServices.instance.invitations.create(
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) => VaultServices.instance.invitations.create(
     _actor(session),
     organizationId,
     email,
     name,
     role,
+    readProjects: readProjects,
+    writeProjects: writeProjects,
+    deniedReadProjects: deniedReadProjects,
+    deniedWriteProjects: deniedWriteProjects,
+    canCreateProjects: canCreateProjects,
   );
   Future<List<InvitationView>> inbox(
     Session session, {

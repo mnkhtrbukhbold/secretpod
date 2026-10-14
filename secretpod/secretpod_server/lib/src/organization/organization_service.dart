@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:uuid/uuid.dart';
 import '../account/account_service.dart';
 import '../generated/protocol.dart';
@@ -50,7 +51,7 @@ class OrganizationService {
     final memberships = rows(
       data,
       'members',
-    ).where((m) => m['accountId'] == actor);
+    ).where((m) => m['accountId'] == actor && m['accessDisabled'] != 1);
     return Pagination(offset: offset, limit: limit)
         .apply(memberships)
         .map(
@@ -60,6 +61,7 @@ class OrganizationService {
               'organizations',
             ).firstWhere((o) => o['id'] == m['organizationId']),
             m['role'] as String,
+            member: m,
           ),
         )
         .toList();
@@ -113,6 +115,12 @@ class OrganizationService {
               ).firstWhere((a) => a['id'] == m['accountId']),
             ),
             role: m['role'] as String,
+            accessDisabled: m['accessDisabled'] == 1,
+            readProjects: projectScope(m, 'readProjects'),
+            writeProjects: projectScope(m, 'writeProjects'),
+            deniedReadProjects: projectScope(m, 'deniedReadProjects'),
+            deniedWriteProjects: projectScope(m, 'deniedWriteProjects'),
+            canCreateProjects: projectCreationAllowed(m),
           ),
         )
         .toList();
@@ -129,6 +137,73 @@ class OrganizationService {
           'Direct member addition is disabled. Create an invitation and wait for acceptance.',
     );
   }
+
+  Future<MemberView> updateMemberAccess(
+    String actor,
+    String organizationId,
+    String accountId,
+    String role, {
+    List<String>? readProjects,
+    List<String>? writeProjects,
+    List<String>? deniedReadProjects,
+    List<String>? deniedWriteProjects,
+    bool? canCreateProjects,
+  }) => store.write((data) {
+    final member = _removableMember(data, actor, organizationId, accountId);
+    final scopes = validateProjectScopes(
+      data,
+      organizationId,
+      role,
+      readProjects,
+      writeProjects,
+      existingMember: member,
+      deniedReadProjects: deniedReadProjects,
+      deniedWriteProjects: deniedWriteProjects,
+      canCreateProjects: canCreateProjects,
+    );
+    final read = scopes.read == null ? null : jsonEncode(scopes.read);
+    final write = scopes.write == null ? null : jsonEncode(scopes.write);
+    final deniedRead = jsonEncode(scopes.deniedRead);
+    final deniedWrite = jsonEncode(scopes.deniedWrite);
+    final create = scopes.create ? 1 : 0;
+    final account = rows(
+      data,
+      'accounts',
+    ).firstWhere((a) => a['id'] == accountId);
+    if (member['role'] != role ||
+        member['readProjects'] != read ||
+        member['writeProjects'] != write ||
+        member['deniedReadProjects'] != deniedRead ||
+        member['deniedWriteProjects'] != deniedWrite ||
+        member['canCreateProjects'] != create) {
+      final previousRole = member['role'];
+      member['role'] = role;
+      member['readProjects'] = read;
+      member['writeProjects'] = write;
+      member['deniedReadProjects'] = deniedRead;
+      member['deniedWriteProjects'] = deniedWrite;
+      member['canCreateProjects'] = create;
+      recordEvent(
+        data,
+        actor,
+        organizationId,
+        'changed member access',
+        account['email'] as String,
+        details:
+            'Role: $previousRole → $role; Read: ${scopes.read?.join(', ') ?? 'all projects'}; Write: ${scopes.write?.join(', ') ?? 'all projects'}; Denied read: ${scopes.deniedRead.join(', ')}; Denied write: ${scopes.deniedWrite.join(', ')}; Create projects: ${scopes.create}',
+      );
+    }
+    return MemberView(
+      account: AccountService.view(account),
+      role: role,
+      accessDisabled: member['accessDisabled'] == 1,
+      readProjects: scopes.read,
+      writeProjects: scopes.write,
+      deniedReadProjects: scopes.deniedRead,
+      deniedWriteProjects: scopes.deniedWrite,
+      canCreateProjects: scopes.create,
+    );
+  });
 
   Future<List<SecretView>> memberRemovalSecrets(
     String actor,
@@ -156,6 +231,96 @@ class OrganizationService {
     int utcOffsetMinutes = 0,
   }) => store.write((data) {
     final member = _removableMember(data, actor, organizationId, accountId);
+    final selectedCount = _markReviewedSecrets(
+      data,
+      actor,
+      organizationId,
+      accountId,
+      reviewedSecretIds,
+      rotateSecretIds,
+      utcOffsetMinutes,
+      reason: 'Member removed',
+    );
+    final account = rows(
+      data,
+      'accounts',
+    ).firstWhere((a) => a['id'] == accountId);
+    rows(data, 'members').remove(member);
+    recordEvent(
+      data,
+      actor,
+      organizationId,
+      'removed member',
+      '${account['name']} (${account['email']})',
+      details: 'Account: $accountId; selected for rotation: $selectedCount',
+    );
+  });
+
+  Future<MemberView> setMemberEnabled(
+    String actor,
+    String organizationId,
+    String accountId,
+    bool enabled, {
+    List<String> reviewedSecretIds = const [],
+    List<String> rotateSecretIds = const [],
+    int utcOffsetMinutes = 0,
+  }) => store.write((data) {
+    final member = _removableMember(data, actor, organizationId, accountId);
+    if (enabled &&
+        (reviewedSecretIds.isNotEmpty || rotateSecretIds.isNotEmpty)) {
+      throw VaultException(
+        message: 'Re-enabling access does not change rotation flags.',
+      );
+    }
+    final selectedCount = enabled
+        ? 0
+        : _markReviewedSecrets(
+            data,
+            actor,
+            organizationId,
+            accountId,
+            reviewedSecretIds,
+            rotateSecretIds,
+            utcOffsetMinutes,
+            reason: 'Member access disabled',
+          );
+    final account = rows(
+      data,
+      'accounts',
+    ).firstWhere((a) => a['id'] == accountId);
+    if ((member['accessDisabled'] == 1) == enabled) {
+      member['accessDisabled'] = enabled ? 0 : 1;
+      recordEvent(
+        data,
+        actor,
+        organizationId,
+        enabled ? 'enabled member access' : 'disabled member access',
+        '${account['name']} (${account['email']})',
+        details: 'Account: $accountId; selected for rotation: $selectedCount',
+      );
+    }
+    return MemberView(
+      account: AccountService.view(account),
+      role: member['role'] as String,
+      accessDisabled: member['accessDisabled'] == 1,
+      readProjects: projectScope(member, 'readProjects'),
+      writeProjects: projectScope(member, 'writeProjects'),
+      deniedReadProjects: projectScope(member, 'deniedReadProjects'),
+      deniedWriteProjects: projectScope(member, 'deniedWriteProjects'),
+      canCreateProjects: projectCreationAllowed(member),
+    );
+  });
+
+  int _markReviewedSecrets(
+    VaultData data,
+    String actor,
+    String organizationId,
+    String accountId,
+    List<String> reviewedSecretIds,
+    List<String> rotateSecretIds,
+    int utcOffsetMinutes, {
+    required String reason,
+  }) {
     final secrets = _accessedSecrets(
       data,
       organizationId,
@@ -167,7 +332,7 @@ class OrganizationService {
     if (current.length != reviewed.length || !current.containsAll(reviewed)) {
       throw VaultException(
         message:
-            'Secret access changed. Refresh the review before removing this member.',
+            'Secret access changed. Refresh the review before changing this member’s access.',
       );
     }
     final selected = rotateSecretIds.toSet();
@@ -176,29 +341,17 @@ class OrganizationService {
         message: 'Choose secrets from this member’s current access review.',
       );
     }
-    final account = rows(
-      data,
-      'accounts',
-    ).firstWhere((a) => a['id'] == accountId);
     for (final secret in secrets.where((s) => selected.contains(s['id']))) {
       markSecretRotation(
         data,
         actor,
         secret,
         true,
-        details: 'Member removed: $accountId',
+        details: '$reason: $accountId',
       );
     }
-    rows(data, 'members').remove(member);
-    recordEvent(
-      data,
-      actor,
-      organizationId,
-      'removed member',
-      '${account['name']} (${account['email']})',
-      details: 'Account: $accountId; selected for rotation: ${selected.length}',
-    );
-  });
+    return selected.length;
+  }
 
   Map<String, dynamic> _removableMember(
     VaultData data,
@@ -217,7 +370,7 @@ class OrganizationService {
     if (member == null) throw VaultException(message: 'Member not found.');
     if (member['role'] == 'owner' || accountId == actor) {
       throw VaultException(
-        message: 'The organization owner cannot be removed.',
+        message: 'The organization owner cannot be removed or disabled.',
       );
     }
     return member;
@@ -265,11 +418,25 @@ class OrganizationService {
     );
   }
 
-  static OrganizationView _view(Map<String, dynamic> o, String role) =>
-      OrganizationView(
-        id: o['id'] as String,
-        name: o['name'] as String,
-        role: role,
-        createdAt: DateTime.parse(o['createdAt'] as String),
-      );
+  static OrganizationView _view(
+    Map<String, dynamic> o,
+    String role, {
+    Map<String, dynamic>? member,
+  }) => OrganizationView(
+    id: o['id'] as String,
+    name: o['name'] as String,
+    role: role,
+    createdAt: DateTime.parse(o['createdAt'] as String),
+    readProjects: member == null ? null : projectScope(member, 'readProjects'),
+    writeProjects: member == null
+        ? null
+        : projectScope(member, 'writeProjects'),
+    deniedReadProjects: member == null
+        ? null
+        : projectScope(member, 'deniedReadProjects'),
+    deniedWriteProjects: member == null
+        ? null
+        : projectScope(member, 'deniedWriteProjects'),
+    canCreateProjects: member == null ? null : projectCreationAllowed(member),
+  );
 }

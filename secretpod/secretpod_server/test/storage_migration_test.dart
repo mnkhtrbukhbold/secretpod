@@ -14,8 +14,52 @@ void main() {
   late File legacy;
   VaultServices? services;
 
+  Future<void> removeDisabledAccess(VaultDatabaseSession database) async {
+    for (final table in ['members', 'invitations']) {
+      final current = (await database.db.unsafeQuery(
+        'PRAGMA table_info(vault_$table)',
+      )).map((r) => r[1]).toSet();
+      for (final column in [
+        'deniedReadProjects',
+        'deniedWriteProjects',
+        'canCreateProjects',
+      ]) {
+        if (current.contains(column)) {
+          await database.db.unsafeExecute(
+            'ALTER TABLE vault_$table DROP COLUMN $column',
+          );
+        }
+      }
+    }
+    final columns = (await database.db.unsafeQuery(
+      'PRAGMA table_info(vault_members)',
+    )).map((r) => r[1]);
+    if (columns.contains('accessDisabled')) {
+      await database.db.unsafeExecute(
+        'ALTER TABLE vault_members DROP COLUMN accessDisabled',
+      );
+    }
+  }
+
+  Future<void> removeProjectPermissions(VaultDatabaseSession database) async {
+    await removeDisabledAccess(database);
+    for (final table in ['members', 'invitations']) {
+      final columns = (await database.db.unsafeQuery(
+        'PRAGMA table_info(vault_$table)',
+      )).map((row) => row[1]).toSet();
+      for (final column in ['readProjects', 'writeProjects']) {
+        if (columns.contains(column)) {
+          await database.db.unsafeExecute(
+            'ALTER TABLE vault_$table DROP COLUMN "$column"',
+          );
+        }
+      }
+    }
+  }
+
   Future<Map<String, dynamic>> fixture() async => {
     'schema': 1,
+    'projects': <Map<String, dynamic>>[],
     'invitations': <Map<String, dynamic>>[],
     'keyCheck': await crypto.encrypt('SecretPod key check v1', 'key-check'),
     'accounts': [
@@ -80,6 +124,131 @@ void main() {
   });
 
   test(
+    'schema nine gains enabled-by-default membership without rewriting old data',
+    () async {
+      services = await VaultServices.open(directory, key);
+      final original = await services!.store.read((d) => d);
+      await services!.close();
+      services = null;
+      var database = await VaultDatabaseSession.open(
+        '${directory.path}/vault.sqlite',
+      );
+      await removeDisabledAccess(database);
+      await database.db.unsafeExecute('PRAGMA user_version = 9');
+      await database.close();
+      await expectLater(
+        VaultServices.open(directory, base64Encode(List.filled(32, 99))),
+        throwsA(anything),
+      );
+      database = await VaultDatabaseSession.open(
+        '${directory.path}/vault.sqlite',
+      );
+      expect(
+        (await database.db.unsafeQuery('PRAGMA user_version')).first.first,
+        9,
+      );
+      expect(
+        (await database.db.unsafeQuery(
+          'PRAGMA table_info(vault_members)',
+        )).map((r) => r[1]),
+        isNot(contains('accessDisabled')),
+      );
+      await database.close();
+      services = await VaultServices.open(directory, key);
+      expect(await services!.store.read((d) => d), original);
+      expect(
+        (await services!.organizations.members(
+          'a1',
+          'o1',
+        )).single.toJson()['accessDisabled'],
+        false,
+      );
+      expect((await services!.organizations.list('a1')).single.id, 'o1');
+      expect(await services!.vault.reveal('a1', 'o1', 's1'), value);
+    },
+  );
+
+  test(
+    'schema seven gains empty projects atomically preserving all records',
+    () async {
+      final fixtureData = await fixture();
+      (fixtureData['secrets'] as List).single.addAll({
+        'usernameCiphertext': await crypto.encrypt(
+          'synthetic-user',
+          'o1:s1:username',
+        ),
+        'url': 'https://example.test/sign-in',
+        'expiresAt': '2030-10-14T00:00:00.000Z',
+        'needsRotation': 1,
+      });
+      (fixtureData['events'] as List).last['project'] = 'Website';
+      await legacy.writeAsString(jsonEncode(fixtureData));
+      final legacyBytes = await legacy.readAsBytes();
+      services = await VaultServices.open(directory, key);
+      final original = await services!.store.read((data) => data);
+      await services!.close();
+      services = null;
+      var database = await VaultDatabaseSession.open(
+        '${directory.path}/vault.sqlite',
+      );
+      await database.db.unsafeExecute('DROP TABLE vault_projects');
+      await removeProjectPermissions(database);
+      await database.db.unsafeExecute('PRAGMA user_version = 7');
+      await database.close();
+      await expectLater(
+        VaultServices.open(directory, base64Encode(List.filled(32, 99))),
+        throwsA(anything),
+      );
+      database = await VaultDatabaseSession.open(
+        '${directory.path}/vault.sqlite',
+      );
+      expect(
+        (await database.db.unsafeQuery('PRAGMA user_version')).first.first,
+        7,
+      );
+      expect(
+        await database.db.unsafeQuery(
+          "SELECT name FROM sqlite_master WHERE name = 'vault_projects'",
+        ),
+        isEmpty,
+      );
+      await database.close();
+      services = await VaultServices.open(directory, key);
+      expect(await services!.store.read((data) => data), original);
+      expect((await services!.vault.summary('a1', 'o1')).projectCounts, {
+        'Default': 0,
+        'Website': 1,
+      });
+      expect(
+        await services!.vault.createProject('a1', 'o1', 'Empty project'),
+        'Empty project',
+      );
+      await services!.close();
+      services = await VaultServices.open(directory, key);
+      expect((await services!.vault.summary('a1', 'o1')).projectCounts, {
+        'Default': 0,
+        'Empty project': 0,
+        'Website': 1,
+      });
+      final after = await services!.store.read((data) => data);
+      for (final collection in [
+        'accounts',
+        'sessions',
+        'organizations',
+        'members',
+        'secrets',
+        'invitations',
+      ]) {
+        expect(after[collection], original[collection]);
+      }
+      expect(after['keyCheck'], original['keyCheck']);
+      expect(await services!.accounts.authenticate(token), 'a1');
+      expect(await services!.vault.reveal('a1', 'o1', 's1'), value);
+      expect(await legacy.readAsBytes(), legacyBytes);
+    },
+  );
+
+  test(
     'schema five gains rotation flags atomically without rewriting ciphertext',
     () async {
       services = await VaultServices.open(directory, key);
@@ -92,6 +261,11 @@ void main() {
       await database.db.unsafeExecute(
         'ALTER TABLE vault_secrets DROP COLUMN needsRotation',
       );
+      await database.db.unsafeExecute(
+        'ALTER TABLE vault_events DROP COLUMN project',
+      );
+      await database.db.unsafeExecute('DROP TABLE vault_projects');
+      await removeProjectPermissions(database);
       await database.db.unsafeExecute('PRAGMA user_version = 5');
       await database.close();
       await expectLater(
@@ -136,6 +310,50 @@ void main() {
   );
 
   test(
+    'schema six adds nullable activity projects without inventing history',
+    () async {
+      services = await VaultServices.open(directory, key);
+      final original = await services!.store.read((d) => d);
+      await services!.close();
+      services = null;
+      var database = await VaultDatabaseSession.open(
+        '${directory.path}/vault.sqlite',
+      );
+      await database.db.unsafeExecute(
+        'ALTER TABLE vault_events DROP COLUMN project',
+      );
+      await database.db.unsafeExecute('DROP TABLE vault_projects');
+      await removeProjectPermissions(database);
+      await database.db.unsafeExecute('PRAGMA user_version = 6');
+      await database.close();
+      services = await VaultServices.open(directory, key);
+      expect(await services!.store.read((d) => d), original);
+      final events = await services!.tracking.list('a1', 'o1');
+      expect(events, isNotEmpty);
+      expect(
+        await services!.tracking.list('a1', 'o1', project: 'Default'),
+        isEmpty,
+      );
+      await services!.close();
+      services = null;
+      database = await VaultDatabaseSession.open(
+        '${directory.path}/vault.sqlite',
+      );
+      expect(
+        (await database.db.unsafeQuery('PRAGMA user_version')).first.first,
+        11,
+      );
+      expect(
+        (await database.db.unsafeQuery(
+          'SELECT project FROM vault_events',
+        )).first.first,
+        isNull,
+      );
+      await database.close();
+    },
+  );
+
+  test(
     'schema four adds theme atomically preserving all records and restart',
     () async {
       services = await VaultServices.open(directory, key);
@@ -148,6 +366,11 @@ void main() {
       await database.db.unsafeExecute(
         'ALTER TABLE vault_accounts DROP COLUMN themeMode',
       );
+      await database.db.unsafeExecute(
+        'ALTER TABLE vault_events DROP COLUMN project',
+      );
+      await database.db.unsafeExecute('DROP TABLE vault_projects');
+      await removeProjectPermissions(database);
       await database.db.unsafeExecute('PRAGMA user_version = 4');
       await database.db.unsafeExecute(
         'ALTER TABLE vault_secrets DROP COLUMN needsRotation',
@@ -182,7 +405,7 @@ void main() {
       );
       expect(
         (await database.db.unsafeQuery('PRAGMA user_version')).first.first,
-        6,
+        11,
       );
       await database.close();
       services = await VaultServices.open(directory, key);
@@ -209,6 +432,11 @@ void main() {
       await database.db.unsafeExecute(
         'ALTER TABLE vault_accounts DROP COLUMN themeMode',
       );
+      await database.db.unsafeExecute(
+        'ALTER TABLE vault_events DROP COLUMN project',
+      );
+      await database.db.unsafeExecute('DROP TABLE vault_projects');
+      await removeProjectPermissions(database);
       await database.db.unsafeExecute('PRAGMA user_version = 3');
       await database.db.unsafeExecute(
         'ALTER TABLE vault_secrets DROP COLUMN needsRotation',
@@ -236,16 +464,18 @@ void main() {
   );
 
   test(
-    'legacy JSON without invitation collection imports without changing source',
+    'legacy JSON without newer collections imports without changing source',
     () async {
       final data = await fixture()
-        ..remove('invitations');
+        ..remove('invitations')
+        ..remove('projects');
       final original = jsonEncode(data);
       await legacy.writeAsString(original);
       services = await VaultServices.open(directory, key);
       expect(await services!.store.read((d) => d['invitations']), isEmpty);
       final loaded = await services!.store.read((d) => d)
-        ..remove('invitations');
+        ..remove('invitations')
+        ..remove('projects');
       expect(loaded, data);
       expect(await legacy.readAsString(), original);
     },
@@ -278,6 +508,11 @@ void main() {
       await database.db.unsafeExecute(
         'ALTER TABLE vault_accounts DROP COLUMN themeMode',
       );
+      await database.db.unsafeExecute(
+        'ALTER TABLE vault_events DROP COLUMN project',
+      );
+      await database.db.unsafeExecute('DROP TABLE vault_projects');
+      await removeProjectPermissions(database);
       await database.db.unsafeExecute('PRAGMA user_version = 2');
       await database.db.unsafeExecute(
         'ALTER TABLE vault_secrets DROP COLUMN needsRotation',
@@ -305,7 +540,7 @@ void main() {
       try {
         expect(
           (await database.db.unsafeQuery('PRAGMA user_version')).first.first,
-          6,
+          11,
         );
         expect(
           (await database.db.unsafeQuery(
@@ -583,6 +818,11 @@ void main() {
         await database.db.unsafeExecute(
           'ALTER TABLE vault_accounts DROP COLUMN themeMode',
         );
+        await database.db.unsafeExecute(
+          'ALTER TABLE vault_events DROP COLUMN project',
+        );
+        await database.db.unsafeExecute('DROP TABLE vault_projects');
+        await removeProjectPermissions(database);
         await database.db.unsafeExecute('PRAGMA user_version = 1');
         await database.db.unsafeExecute(
           'ALTER TABLE vault_secrets DROP COLUMN needsRotation',
@@ -618,7 +858,7 @@ void main() {
       try {
         expect(
           (await database.db.unsafeQuery('PRAGMA user_version')).first.first,
-          6,
+          11,
         );
         expect(
           (await database.db.unsafeQuery(

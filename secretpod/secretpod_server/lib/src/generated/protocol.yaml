@@ -21,11 +21,14 @@ profile:
 vault:
   - organizations:
   - createOrganization:
+  - createProject:
   - renameOrganization:
   - members:
   - addMember:
+  - updateMemberAccess:
   - memberRemovalSecrets:
   - removeMember:
+  - setMemberEnabled:
   - setSecretRotationRequired:
   - listSecrets:
   - summary:

@@ -21,6 +21,10 @@ abstract class WorkspaceSummary
     required this.memberCount,
     required this.activityCount,
     required this.projectCounts,
+    this.filteredActivityCount,
+    this.activityProjects,
+    this.activityActions,
+    this.activityUsers,
   });
 
   factory WorkspaceSummary({
@@ -29,6 +33,10 @@ abstract class WorkspaceSummary
     required int memberCount,
     required int activityCount,
     required Map<String, int> projectCounts,
+    int? filteredActivityCount,
+    List<String>? activityProjects,
+    List<String>? activityActions,
+    Map<String, String>? activityUsers,
   }) = _WorkspaceSummaryImpl;
 
   factory WorkspaceSummary.fromJson(Map<String, dynamic> jsonSerialization) {
@@ -40,6 +48,22 @@ abstract class WorkspaceSummary
       projectCounts: _ii063q5q.Protocol().deserialize<Map<String, int>>(
         jsonSerialization['projectCounts'],
       ),
+      filteredActivityCount: jsonSerialization['filteredActivityCount'] as int?,
+      activityProjects: jsonSerialization['activityProjects'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<List<String>>(
+              jsonSerialization['activityProjects'],
+            ),
+      activityActions: jsonSerialization['activityActions'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<List<String>>(
+              jsonSerialization['activityActions'],
+            ),
+      activityUsers: jsonSerialization['activityUsers'] == null
+          ? null
+          : _ii063q5q.Protocol().deserialize<Map<String, String>>(
+              jsonSerialization['activityUsers'],
+            ),
     );
   }
 
@@ -53,6 +77,14 @@ abstract class WorkspaceSummary
 
   Map<String, int> projectCounts;
 
+  int? filteredActivityCount;
+
+  List<String>? activityProjects;
+
+  List<String>? activityActions;
+
+  Map<String, String>? activityUsers;
+
   /// Returns a shallow copy of this [WorkspaceSummary]
   /// with some or all fields replaced by the given arguments.
   @_is.useResult
@@ -62,6 +94,10 @@ abstract class WorkspaceSummary
     int? memberCount,
     int? activityCount,
     Map<String, int>? projectCounts,
+    int? filteredActivityCount,
+    List<String>? activityProjects,
+    List<String>? activityActions,
+    Map<String, String>? activityUsers,
   });
   @override
   Map<String, dynamic> toJson() {
@@ -72,6 +108,12 @@ abstract class WorkspaceSummary
       'memberCount': memberCount,
       'activityCount': activityCount,
       'projectCounts': projectCounts.toJson(),
+      if (filteredActivityCount != null)
+        'filteredActivityCount': filteredActivityCount,
+      if (activityProjects != null)
+        'activityProjects': activityProjects?.toJson(),
+      if (activityActions != null) 'activityActions': activityActions?.toJson(),
+      if (activityUsers != null) 'activityUsers': activityUsers?.toJson(),
     };
   }
 
@@ -84,6 +126,12 @@ abstract class WorkspaceSummary
       'memberCount': memberCount,
       'activityCount': activityCount,
       'projectCounts': projectCounts.toJson(),
+      if (filteredActivityCount != null)
+        'filteredActivityCount': filteredActivityCount,
+      if (activityProjects != null)
+        'activityProjects': activityProjects?.toJson(),
+      if (activityActions != null) 'activityActions': activityActions?.toJson(),
+      if (activityUsers != null) 'activityUsers': activityUsers?.toJson(),
     };
   }
 
@@ -93,6 +141,8 @@ abstract class WorkspaceSummary
   }
 }
 
+class _Undefined {}
+
 class _WorkspaceSummaryImpl extends WorkspaceSummary {
   _WorkspaceSummaryImpl({
     required int secretCount,
@@ -100,12 +150,20 @@ class _WorkspaceSummaryImpl extends WorkspaceSummary {
     required int memberCount,
     required int activityCount,
     required Map<String, int> projectCounts,
+    int? filteredActivityCount,
+    List<String>? activityProjects,
+    List<String>? activityActions,
+    Map<String, String>? activityUsers,
   }) : super._(
          secretCount: secretCount,
          filteredSecretCount: filteredSecretCount,
          memberCount: memberCount,
          activityCount: activityCount,
          projectCounts: projectCounts,
+         filteredActivityCount: filteredActivityCount,
+         activityProjects: activityProjects,
+         activityActions: activityActions,
+         activityUsers: activityUsers,
        );
 
   /// Returns a shallow copy of this [WorkspaceSummary]
@@ -118,6 +176,10 @@ class _WorkspaceSummaryImpl extends WorkspaceSummary {
     int? memberCount,
     int? activityCount,
     Map<String, int>? projectCounts,
+    Object? filteredActivityCount = _Undefined,
+    Object? activityProjects = _Undefined,
+    Object? activityActions = _Undefined,
+    Object? activityUsers = _Undefined,
   }) {
     return WorkspaceSummary(
       secretCount: secretCount ?? this.secretCount,
@@ -135,6 +197,26 @@ class _WorkspaceSummaryImpl extends WorkspaceSummary {
               value0,
             ),
           ),
+      filteredActivityCount: filteredActivityCount is int?
+          ? filteredActivityCount
+          : this.filteredActivityCount,
+      activityProjects: activityProjects is List<String>?
+          ? activityProjects
+          : this.activityProjects?.map((e0) => e0).toList(),
+      activityActions: activityActions is List<String>?
+          ? activityActions
+          : this.activityActions?.map((e0) => e0).toList(),
+      activityUsers: activityUsers is Map<String, String>?
+          ? activityUsers
+          : this.activityUsers?.map(
+              (
+                key0,
+                value0,
+              ) => MapEntry(
+                key0,
+                value0,
+              ),
+            ),
     );
   }
 }

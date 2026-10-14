@@ -23,7 +23,7 @@ jobs:
       - run: flutter test
         working-directory: secretpod/secretpod_flutter
       - run: python3 -m unittest discover -s tests -p 'test_*.py'
-      - run: sh -n scripts/start.sh scripts/setup.sh
+      - run: for script in scripts/start.sh scripts/setup.sh scripts/host.sh scripts/install.sh; do sh -n "$script"; done
       - run: sh scripts/test-start.sh
   container:
     runs-on: ubuntu-latest
@@ -38,3 +38,10 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - run: python3 tests/docker_lifecycle.py --image secretpod:test
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/manager.Dockerfile
+          load: true
+          tags: secretpod-manager:test
+      - run: python3 tests/container_manager_lifecycle.py --image secretpod:test --manager-image secretpod-manager:test

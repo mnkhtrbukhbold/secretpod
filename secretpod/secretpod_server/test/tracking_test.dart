@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:secretpod_server/src/generated/protocol.dart';
 import 'package:secretpod_server/src/services.dart';
+import 'package:secretpod_server/src/vault/secret_access_limiter.dart';
+import 'package:secretpod_server/src/vault/vault_service.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -66,6 +68,83 @@ void main() {
     expect(events.single['version'], 1);
     expect(jsonEncode(events), isNot(contains('private-test-value')));
   });
+
+  test(
+    'activity filters combine before paging and preserve deleted projects',
+    () async {
+      final payments = await save();
+      await save(project: 'Other');
+      await services.vault.reveal('reader', 'org', payments.id);
+      await services.vault.reveal('reader', 'org', payments.id);
+      await services.store.write((data) {
+        final events = data['events'] as List;
+        for (var i = 0; i < events.length; i++) {
+          events[i]['createdAt'] = DateTime.utc(
+            2026,
+            10,
+            10 + i,
+          ).toIso8601String();
+        }
+      });
+      dynamic tracking = services.tracking;
+      final List<AuditView> matches = await tracking.list(
+        'owner',
+        'org',
+        project: 'payments',
+        action: 'revealed',
+        user: 'id:reader',
+        from: DateTime.utc(2026, 10, 12),
+        until: DateTime.utc(2026, 10, 14),
+        offset: 1,
+        limit: 1,
+      );
+      expect(matches.single.createdAt, DateTime.utc(2026, 10, 12));
+      final List<AuditView> boundary = await tracking.list(
+        'owner',
+        'org',
+        from: DateTime.utc(2026, 10, 12),
+        until: DateTime.utc(2026, 10, 13),
+      );
+      expect(boundary.map((e) => e.createdAt), [DateTime.utc(2026, 10, 12)]);
+      dynamic vault = services.vault;
+      final summary = await vault.summary(
+        'owner',
+        'org',
+        activityProject: 'Payments',
+        activityAction: 'revealed',
+        activityUser: 'id:reader',
+        activityFrom: DateTime.utc(2026, 10, 12),
+        activityUntil: DateTime.utc(2026, 10, 14),
+      );
+      expect(summary.filteredActivityCount, 2);
+      expect(summary.activityProjects, ['Default', 'Other', 'Payments']);
+      expect(summary.activityUsers['id:reader'], contains('reader@'));
+      await services.vault.delete('owner', 'org', payments.id);
+      await services.close();
+      services = await VaultServices.open(directory, key);
+      tracking = services.tracking;
+      final List<AuditView> deleted = await tracking.list(
+        'reader',
+        'org',
+        project: 'Payments',
+        action: 'deleted',
+      );
+      expect(deleted.single.secretId, payments.id);
+      await expectLater(
+        tracking.list('outsider', 'org', project: 'Payments'),
+        throwsA(isA<VaultException>()),
+      );
+      await expectLater(
+        tracking.list(
+          'owner',
+          'org',
+          from: DateTime.utc(2026, 10, 14),
+          until: DateTime.utc(2026, 10, 12),
+        ),
+        throwsA(isA<VaultException>()),
+      );
+    },
+  );
 
   test(
     'metadata edits and unchanged saves do not claim the value changed',
@@ -196,8 +275,15 @@ void main() {
     'history pagination keeps older events reachable while new ones arrive',
     () async {
       final secret = await save();
+      var accessTime = DateTime.utc(2026, 10, 14);
+      final vault = VaultService(
+        services.store,
+        services.crypto,
+        accessLimiter: SecretAccessLimiter(now: () => accessTime),
+      );
       for (var i = 0; i < 54; i++) {
-        await services.vault.reveal('reader', 'org', secret.id);
+        await vault.reveal('reader', 'org', secret.id);
+        accessTime = accessTime.add(const Duration(seconds: 2));
       }
       dynamic tracking = services.tracking;
       final first =

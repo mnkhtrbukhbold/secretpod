@@ -29,9 +29,17 @@ void main() {
 }
 
 class MyApp extends StatefulWidget {
-  const MyApp({super.key, this.controller, this.serverUrl});
+  const MyApp({
+    super.key,
+    this.controller,
+    this.serverUrl,
+    this.builder,
+    this.signedOutBuilder,
+  });
   final VaultController? controller;
   final String? serverUrl;
+  final TransitionBuilder? builder;
+  final WidgetBuilder? signedOutBuilder;
   @override
   State<MyApp> createState() => _MyAppState();
 }
@@ -45,23 +53,35 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     popOverlay: _router.popRoute,
   );
   String? _displayedSession;
+  String? _displayedOrganizationId;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _displayedSession = controller.auth.token;
+    _displayedOrganizationId = controller.organization?.id;
     controller.addListener(_sessionChanged);
     controller.restoreSession();
   }
 
   void _sessionChanged() {
-    if (_displayedSession == controller.auth.token) return;
+    final changedSession = _displayedSession != controller.auth.token;
     final hadSession = _displayedSession != null;
+    final previousOrganizationId = _displayedOrganizationId;
+    final lostOrganization =
+        previousOrganizationId != null &&
+        controller.organization?.id != previousOrganizationId &&
+        !controller.organizations.any(
+          (org) => org.id == previousOrganizationId,
+        );
     _displayedSession = controller.auth.token;
+    _displayedOrganizationId = controller.organization?.id;
     // Dispose dialogs and their revealed values when a different tab signs out
     // or switches accounts. Do not use a token as a widget/debug key.
-    if (hadSession) {
+    // Also dispose secret dialogs after refresh learns organization access was
+    // revoked. An intentional switch between accessible organizations is safe.
+    if ((changedSession && hadSession) || lostOrganization) {
       _router.resetSession(signedOut: controller.auth.token == null);
     }
   }
@@ -95,6 +115,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     listenable: controller,
     builder: (_, _) => MaterialApp.router(
       title: 'SecretPod · Team secrets',
+      builder: widget.builder,
       routerDelegate: _router,
       routeInformationParser: const AppRouteParser(),
       routeInformationProvider: _history,
@@ -121,7 +142,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           onClose: _router.closeInvitation,
         )
       : controller.account == null
-      ? AuthScreen(controller: controller)
+      ? widget.signedOutBuilder?.call(context) ??
+            AuthScreen(controller: controller)
       : WorkspaceScreen(
           controller: controller,
           page: _router.page,

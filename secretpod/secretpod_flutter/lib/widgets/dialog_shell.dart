@@ -63,6 +63,7 @@ class SecretPodDialog extends StatelessWidget {
     this.actions = const [],
     this.headerBottom,
     this.scrollController,
+    this.scrollBody = true,
   });
 
   final String title;
@@ -74,6 +75,9 @@ class SecretPodDialog extends StatelessWidget {
   final List<Widget> actions;
   final Widget? headerBottom;
   final ScrollController? scrollController;
+
+  /// Set false when the body supplies its own bounded, lazy scroll view.
+  final bool scrollBody;
 
   @override
   Widget build(BuildContext context) {
@@ -147,12 +151,17 @@ class SecretPodDialog extends StatelessWidget {
                 Divider(height: 1, thickness: 1, color: context.colors.outline),
                 ?headerBottom,
                 Flexible(
-                  child: SingleChildScrollView(
-                    key: const ValueKey('dialog-body-scroll'),
-                    controller: scrollController,
-                    padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
-                    child: child,
-                  ),
+                  child: scrollBody
+                      ? SingleChildScrollView(
+                          key: const ValueKey('dialog-body-scroll'),
+                          controller: scrollController,
+                          padding: const EdgeInsets.fromLTRB(28, 20, 28, 28),
+                          child: child,
+                        )
+                      : Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                          child: child,
+                        ),
                 ),
                 if (actions.isNotEmpty) ...[
                   Divider(

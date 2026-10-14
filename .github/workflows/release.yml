@@ -29,6 +29,14 @@ jobs:
           cache-to: type=gha,mode=max
       - name: Verify deployment before publishing
         run: python3 tests/docker_lifecycle.py --image secretpod:test
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/manager.Dockerfile
+          load: true
+          tags: secretpod-manager:test
+      - name: Verify Python-free setup and maintenance
+        run: python3 tests/container_manager_lifecycle.py --image secretpod:test --manager-image secretpod-manager:test
       - uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -41,6 +49,8 @@ jobs:
         run: |
           docker tag secretpod:test "$IMAGE:$VERSION"
           docker push "$IMAGE:$VERSION"
+          docker tag secretpod-manager:test "$IMAGE-manager:$VERSION"
+          docker push "$IMAGE-manager:$VERSION"
       - name: Publish portable prebuilt image
         env:
           GH_TOKEN: ${{ github.token }}
@@ -49,4 +59,6 @@ jobs:
         run: |
           docker save "$IMAGE:$VERSION" | gzip > secretpod-linux-amd64.tar.gz
           sha256sum secretpod-linux-amd64.tar.gz > secretpod-linux-amd64.tar.gz.sha256
-          gh release create "v$VERSION" secretpod-linux-amd64.tar.gz secretpod-linux-amd64.tar.gz.sha256 --verify-tag --title "SecretPod $VERSION" --notes "Prebuilt Linux amd64 image. See docs/self-hosting.md for HTTPS setup, upgrades, backup and restore."
+          docker save "$IMAGE-manager:$VERSION" | gzip > secretpod-manager-linux-amd64.tar.gz
+          sha256sum secretpod-manager-linux-amd64.tar.gz > secretpod-manager-linux-amd64.tar.gz.sha256
+          gh release create "v$VERSION" secretpod-linux-amd64.tar.gz secretpod-linux-amd64.tar.gz.sha256 secretpod-manager-linux-amd64.tar.gz secretpod-manager-linux-amd64.tar.gz.sha256 --verify-tag --title "SecretPod $VERSION" --notes "Prebuilt Linux amd64 app and manager images. No host Python required. See docs/self-hosting.md for setup and maintenance."

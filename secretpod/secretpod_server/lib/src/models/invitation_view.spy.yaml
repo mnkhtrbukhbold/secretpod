@@ -12,3 +12,8 @@ fields:
   createdAt: DateTime
   expiresAt: DateTime
   respondedAt: DateTime?
+  readProjects: List<String>?
+  writeProjects: List<String>?
+  deniedReadProjects: List<String>?
+  deniedWriteProjects: List<String>?
+  canCreateProjects: bool?

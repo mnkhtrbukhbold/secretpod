@@ -43,6 +43,7 @@ class VaultServices {
             'secrets',
             'events',
             'invitations',
+            'projects',
           ].any((collection) => rows(data, collection).isNotEmpty)) {
             throw StateError('Existing vault is missing its master-key check.');
           }

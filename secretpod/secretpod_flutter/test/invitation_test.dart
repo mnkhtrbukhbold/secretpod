@@ -606,6 +606,7 @@ void main() {
       // The browser/back dismissal does not return a success value to the page.
       Navigator.of(tester.element(find.byType(InviteMemberDialog))).pop();
       await tester.pumpAndSettle();
+      await tap(tester, find.widgetWithText(Tab, 'Invitations'));
       expect(find.text('person@company.test'), findsOneWidget);
       final badge = tester.widget<Badge>(find.byType(Badge));
       expect((badge.label! as Text).data, '1');
@@ -639,6 +640,7 @@ void main() {
       ];
       await tester.pumpWidget(MyApp(controller: controller));
       await tap(tester, find.text('Members'));
+      await tap(tester, find.widgetWithText(Tab, 'Invitations'));
       expect(find.text('Already joined'), findsOneWidget);
       expect(find.text('Accepted'), findsOneWidget);
       expect(find.text('Revoke invitation'), findsOneWidget);
@@ -673,6 +675,30 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  for (final width in [390.0, 1200.0]) {
+    testWidgets('invitation shortcut reveals preferences at $width', (
+      tester,
+    ) async {
+      signedIn();
+      tester.view.physicalSize = Size(width, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pumpWidget(MyApp(controller: controller));
+      await openPersonalInvitations(tester);
+      await tap(tester, find.text('Manage invitation preferences'));
+      expect(find.text('Who can invite you?').hitTestable(), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('invitation-policy')).hitTestable(),
+        findsOneWidget,
+      );
+      await tap(tester, find.text('Back to workspace'));
+      await openProfileSettings(tester);
+      expect(find.text('Your profile').hitTestable(), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets(
     'invitations and preferences remain accessible without organization membership',

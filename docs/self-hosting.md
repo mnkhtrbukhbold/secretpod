@@ -4,22 +4,22 @@ Docker Compose is the primary deployment path. One prebuilt SecretPod image cont
 
 ## Requirements
 
-- A Linux server with Docker Engine and Compose v2, Python 3.10+, curl and tar. The first release image targets Linux amd64. Docker Desktop can run it on Windows/macOS; ARM hosts need amd64 emulation.
+- A Linux server with Docker Engine and Compose v2, curl and a POSIX shell. The first release image targets Linux amd64. Docker Desktop can run it on Windows/macOS; ARM hosts need amd64 emulation.
 - For public HTTPS, a hostname whose A/AAAA records point to this server, reachable TCP ports 80 and 443, and outbound access for pulling images and obtaining certificates. Remove incorrect AAAA records. Caddy obtains and renews publicly trusted certificates automatically when these conditions hold.
 - Local persistent disk. Run one app instance per vault. Do not mount SQLite on network storage or scale the app service to multiple replicas.
-- On Windows, install Python from python.org and disable the Microsoft Store execution alias if it intercepts `python`.
+- Windows uses PowerShell and Docker Desktop in Linux-container mode. Python is included in the temporary management container; it is not a host prerequisite. Use a local Docker context; remote SSH/TCP engines are not supported by these launchers.
 
 ## One-command public installation
 
 After prerequisites and DNS are configured, replace the hostname:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/mnkhtrbukhbold/secretpod/v0.1.0/scripts/install.sh | sh -s -- --url https://vault.example.com
+curl -fsSL https://raw.githubusercontent.com/mnkhtrbukhbold/secretpod/v0.1.1/scripts/install.sh | sh -s -- --url https://vault.example.com
 ```
 
-The bootstrap downloads the tagged source tools, pulls `ghcr.io/mnkhtrbukhbold/secretpod:0.1.0`, creates `~/secretpod`, generates the master key once, and starts Compose. Open your HTTPS URL and create an account. There are no default credentials. Registration is currently open to anyone who can reach the instance; use your network access controls for a private team installation.
+The bootstrap downloads a small shell launcher and runs the prebuilt `ghcr.io/mnkhtrbukhbold/secretpod-manager:0.1.1` management container. That tool pulls `ghcr.io/mnkhtrbukhbold/secretpod:0.1.1`, creates `~/secretpod`, generates the master key once, and starts Compose. Open your HTTPS URL and create an account. There are no default credentials. Registration is currently open to anyone who can reach the instance; use your network access controls for a private team installation.
 
-If the official registry image cannot be pulled anonymously, setup downloads the identical prebuilt image from the public GitHub Release, verifies its SHA-256 checksum and loads it into Docker. It does not fall back to compiling source. Release archives also provide an offline distribution format.
+If the official application image cannot be pulled anonymously, setup downloads the identical prebuilt image from the public GitHub Release, verifies its SHA-256 checksum and loads it into Docker. It does not fall back to compiling source. Release archives also provide an offline distribution format. The manager image must be anonymously pullable or already loaded; preload the manager, app and Caddy images for an offline installation.
 
 To inspect the installer before executing, download the tagged repository archive, extract it, and run:
 
@@ -41,7 +41,7 @@ Use `https://localhost` for a local evaluation, or custom ports if 80/443 are oc
 
 ```sh
 sh scripts/setup.sh --url https://localhost:8443 --http-port 8088
-python3 "$HOME/secretpod/scripts/host.py" trust-cert --dir "$HOME/secretpod"
+sh "$HOME/secretpod/scripts/host.sh" trust-cert --dir "$HOME/secretpod"
 ```
 
 Localhost binds only to loopback. Caddy issues a local certificate; it is not publicly trusted. The second command exports `~/secretpod/local-root.crt`. Import that root certificate into the client machine/browser's trust store to trust this local installation. This command does not change system trust automatically. Public hostnames use ACME instead.
@@ -56,7 +56,7 @@ The installation directory is private (0700 on POSIX; an explicit current-user/S
 | `manifest.json` | Image version, public origin, ports and unique Compose project identity |
 | `config.env` | Non-secret Compose settings |
 | `compose.yaml`, `Caddyfile` | Installed deployment configuration |
-| `scripts/host.py` | Retained management command; source download is no longer required |
+| `scripts/host.sh`, `scripts/host.ps1` | Retained management launchers; source download and host Python are not required |
 | `backups/` | Backups automatically created before upgrades |
 
 The named `<project>_vault-data` volume holds the SQLite database. Caddy certificate state is in `<project>_caddy-data`; its internal configuration is in `<project>_caddy-config`. Container recreation preserves these volumes. Do not use `docker compose down -v` on an installation you intend to keep.
@@ -71,20 +71,24 @@ Only Caddy publishes ports. `/api/` is forwarded to the app's private API port 8
 
 ## Daily operations
 
-Use `python` instead of `python3` on Windows. These examples assume the default installation location:
+These examples use the default installation location. On Windows, replace `sh "$HOME/secretpod/scripts/host.sh"` with `& "$HOME/secretpod/scripts/host.ps1"`; the arguments are the same:
 
 ```sh
-python3 "$HOME/secretpod/scripts/host.py" status --dir "$HOME/secretpod"
-python3 "$HOME/secretpod/scripts/host.py" stop --dir "$HOME/secretpod"
-python3 "$HOME/secretpod/scripts/host.py" up --dir "$HOME/secretpod"
+sh "$HOME/secretpod/scripts/host.sh" status --dir "$HOME/secretpod"
+sh "$HOME/secretpod/scripts/host.sh" stop --dir "$HOME/secretpod"
+sh "$HOME/secretpod/scripts/host.sh" up --dir "$HOME/secretpod"
 ```
+
+Each command starts a temporary manager container and removes it on exit. It contains Python and Compose, mounts the local Docker socket and the selected installation/backup parent directories, and operates with Docker administrative access. On Linux it writes files as your user; on Windows the launcher protects the destination with a private ACL before writing keys. Keep the parent directories present and use ordinary local paths, without symlinks/junctions or commas.
+
+Image pulls use the host Docker CLI, so an existing `docker login` also works for custom private images. Credentials and credential-helper files are not copied into the manager. `--no-pull` uses preloaded images, including the manager. Choose an installation under your home directory, `/opt`, or `/srv`; system runtime directories are rejected.
 
 Operations on the same installation are serialized. After a crashed management process, a lock can remain; verify that no management process is still running before removing the lock named in the error. Never remove locks to run operations concurrently.
 
 ## Backup
 
 ```sh
-python3 "$HOME/secretpod/scripts/host.py" backup --dir "$HOME/secretpod" --backup "$HOME/secretpod-backup-2026-10-14"
+sh "$HOME/secretpod/scripts/host.sh" backup --dir "$HOME/secretpod" --backup "$HOME/secretpod-backup-2026-10-14"
 ```
 
 The destination must not already exist. Backup stops the app, archives the complete data volume, saves its matching key and manifest, writes SHA-256 checksums, verifies the archive, and resumes the app if it was running. This causes brief downtime. Never copy only a running SQLite main file.
@@ -96,7 +100,7 @@ The backup contains both ciphertext and its decryption key. It is a private dire
 Copy the complete backup directory to the destination machine. Use the management script from a source download or the retained installation. Restore into a directory that does not exist:
 
 ```sh
-python3 scripts/host.py restore --dir "$HOME/secretpod-restored" --backup "$HOME/secretpod-backup-2026-10-14" --url https://vault.example.com
+sh scripts/host.sh restore --dir "$HOME/secretpod-restored" --backup "$HOME/secretpod-backup-2026-10-14" --url https://vault.example.com
 ```
 
 Restore verifies checksums, the key format and permitted archive members; rejects symlinks, traversal and existing destinations; creates a new Compose project and data volume; restores the exact key/data pair; then starts the backup's image version. It never overwrites a working vault. The public URL can change without rebuilding the frontend. Point DNS to the destination when moving hosts. Stop the old installation first if reusing its host ports.
@@ -108,14 +112,14 @@ Caddy's certificates are intentionally not included in vault backups. Public cer
 Choose an actually published version tag or digest from the repository's package page:
 
 ```sh
-python3 "$HOME/secretpod/scripts/host.py" upgrade --dir "$HOME/secretpod" --image ghcr.io/mnkhtrbukhbold/secretpod:VERSION
+sh "$HOME/secretpod/scripts/host.sh" upgrade --dir "$HOME/secretpod" --image ghcr.io/mnkhtrbukhbold/secretpod:VERSION
 ```
 
 `VERSION` is a placeholder for the desired release; do not type it literally. The tool pulls before stopping the old app, takes a private backup, keeps the app stopped, changes the image, and waits for health. The key and data volume remain unchanged. It refuses unversioned images and `latest`.
 
 An interrupted or failed upgrade leaves `upgrade-pending.json`, including the recovery backup location, and ordinary startup is blocked. Restore that backup into a new installation. Do not manually start the old image against a database the candidate may have migrated. This release has no earlier published baseline; the lifecycle test verifies replacement with a distinct image, while the backend suite exercises schema migration separately.
 
-For management-tool or Compose changes, read the release notes and use the new source's tool as directed; changing the app image alone does not replace installed management scripts/templates.
+Management launchers pin the manager image separately from the app image. For a new manager release, use that release's launchers; `SECRETPOD_MANAGER_IMAGE` can select a tested version or digest explicitly. Existing installations keep their Compose configuration and key. Changing the app image alone does not replace installed scripts/templates.
 
 ## Existing development installations
 
@@ -123,7 +127,7 @@ The former source launcher and old Docker volume remain separate from new manage
 
 ## Verification and boundaries
 
-`python3 tests/docker_lifecycle.py --image secretpod:test` exercises synthetic installation, certificate-verified local HTTPS, redirects, runtime URL loading, account/secret operations, repeated setup, restart, backup, image replacement, restore to a second URL, and failed-pull/overwrite refusal. It removes only its randomly named test projects/volumes. Unit tests cover configuration rejection, missing-key refusal, lock conflicts and unsafe backup input. Tagged release publication runs the lifecycle test before pushing the image.
+`python3 tests/docker_lifecycle.py --image secretpod:test` exercises synthetic installation, certificate-verified local HTTPS, redirects, runtime URL loading, account/secret operations, repeated setup, restart, backup, image replacement, restore to a second URL, and failed-pull/overwrite refusal. It removes only its randomly named test projects/volumes. Unit tests cover configuration rejection, missing-key refusal, lock conflicts and unsafe backup input. `python3 tests/container_manager_lifecycle.py` additionally runs the public launchers with Python removed from their PATH, including retained commands, spaces in paths, permissions, backup, upgrade, restore and failed-upgrade recovery. Python is required for contributors running this test harness, not for operators. Tagged release publication runs both lifecycle tests before pushing either image.
 
 Public ACME issuance requires your domain and DNS; local TLS tests do not establish that your domain is reachable. Native mobile/desktop distribution and multi-replica operation are outside this deployment path.
 
