@@ -19,6 +19,8 @@ curl -fsSL https://raw.githubusercontent.com/mnkhtrbukhbold/secretpod/v0.1.0/scr
 
 The bootstrap downloads the tagged source tools, pulls `ghcr.io/mnkhtrbukhbold/secretpod:0.1.0`, creates `~/secretpod`, generates the master key once, and starts Compose. Open your HTTPS URL and create an account. There are no default credentials. Registration is currently open to anyone who can reach the instance; use your network access controls for a private team installation.
 
+If the official registry image cannot be pulled anonymously, setup downloads the identical prebuilt image from the public GitHub Release, verifies its SHA-256 checksum and loads it into Docker. It does not fall back to compiling source. Release archives also provide an offline distribution format.
+
 To inspect the installer before executing, download the tagged repository archive, extract it, and run:
 
 ```sh

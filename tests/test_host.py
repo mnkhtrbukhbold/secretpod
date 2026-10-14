@@ -108,6 +108,14 @@ foreach($rule in $acl.GetAccessRules($true,$true,[System.Security.Principal.Secu
         with self.assertRaisesRegex(ValueError, 'restore'):
             host.start(self.root, manifest, pull=False)
 
+    def test_release_archive_checksum_rejects_corruption(self):
+        archive = Path(self.temp.name) / 'image.tar.gz'
+        archive.write_bytes(b'abc')
+        host.verify_archive(archive, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  image.tar.gz')
+        archive.write_bytes(b'changed')
+        with self.assertRaisesRegex(ValueError, 'checksum'):
+            host.verify_archive(archive, 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad')
+
 
 if __name__ == '__main__':
     unittest.main()

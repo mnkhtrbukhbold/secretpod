@@ -18,6 +18,8 @@ The Docker build installs the pinned Flutter toolchain, resolves the committed l
 
 The image tag is a version label; deploy by digest when immutability is required. Do not overwrite released tags. Release builds publish the exact tested image.
 
+Every release also includes `secretpod-linux-amd64.tar.gz` and its SHA-256 file. Setup automatically uses that public prebuilt archive if the official GHCR tag cannot be pulled. This avoids making registry authentication a prerequisite while package visibility is configured. `docker load -i secretpod-linux-amd64.tar.gz` can preload a verified archive for an offline installation; preload Caddy as well and use `--no-pull`.
+
 ## Safe first publication from a working directory
 
 Do not upload a ZIP of a working directory containing a real vault. The source-export tool selects approved source paths and excludes runtime state, developer caches, machine configuration, screenshots and internal work records:
@@ -31,5 +33,16 @@ Review its sibling manifest and every staged path. Run a secret scanner such as 
 For future releases from an established repository, use the reviewed Git history and normal pull-request review; ignored files are not removed from history if previously committed.
 
 ## Release validation record
+
+Local verification on 14 October 2026:
+
+- 94 backend tests and 180 Flutter tests passed; workspace analysis reported no issues.
+- 16 Python deployment/export tests passed, including private Windows ACLs, unsafe restore rejection and release-archive checksum validation.
+- 6 PowerShell and 6 POSIX launcher regression checks passed.
+- A clean Windows source copy with an empty package cache installed dependencies, built and served the app, health endpoint, runtime configuration and matching JavaScript. The generated key survived rebuilds.
+- The Linux image built from source. Docker lifecycle checks passed verified local TLS, custom-port redirects, synthetic account/secret storage, restart, backup, upgrade to a distinct image, restore under a new origin, failed pull, overwrite refusal, and failed-candidate recovery protection.
+- Gitleaks 8.30.1 scanned the allowlisted public export and reported no leaks. Runtime keys/data, caches, backups, screenshots and local records were excluded before scanning.
+
+These are application and deployment checks, not a production security audit. Public DNS/ACME issuance was not exercised without an owned deployment hostname.
 
 See the repository's Actions runs for Linux build, source tests, lifecycle checks and image-push evidence. A local lifecycle run can verify local CA trust and HTTP redirects, but cannot validate public ACME issuance without an owned domain pointing to the test host.

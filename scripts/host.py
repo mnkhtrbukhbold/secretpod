@@ -13,8 +13,10 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 from urllib.parse import urlsplit
+from urllib.request import urlopen
 
 SOURCE = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE = 'ghcr.io/mnkhtrbukhbold/secretpod:0.1.0'
@@ -195,6 +197,41 @@ def prerequisites():
     run(['docker', 'compose', 'version'], stdout=subprocess.DEVNULL)
 
 
+def verify_archive(archive, checksum):
+    expected = checksum.split()[0] if checksum.split() else ''
+    if not re.fullmatch(r'[a-f0-9]{64}', expected) or sha256(archive) != expected:
+        raise ValueError('Release image checksum mismatch; image was not loaded.')
+
+
+def pull_image(image):
+    try:
+        run(['docker', 'pull', image])
+        return
+    except subprocess.CalledProcessError:
+        version = re.fullmatch(r'ghcr\.io/mnkhtrbukhbold/secretpod:([0-9]+\.[0-9]+\.[0-9]+)', image)
+        if not version:
+            raise
+    # Public GitHub Releases provide the same prebuilt image without registry login.
+    # This also works when GHCR package visibility has not yet been made public.
+    filename = 'secretpod-linux-amd64.tar.gz'
+    base = 'https://github.com/mnkhtrbukhbold/secretpod/releases/download/v' + version[1] + '/'
+    print('Downloading the prebuilt release image and verifying its checksum.', flush=True)
+    with tempfile.TemporaryDirectory(prefix='secretpod-image-') as temporary:
+        archive = Path(temporary) / filename
+        with urlopen(base + filename + '.sha256', timeout=60) as response:
+            checksum = response.read(1024).decode('ascii')
+        with urlopen(base + filename, timeout=60) as response, archive.open('wb') as output:
+            shutil.copyfileobj(response, output)
+        verify_archive(archive, checksum)
+        run(['docker', 'load', '-i', str(archive)])
+        run(['docker', 'image', 'inspect', image], stdout=subprocess.DEVNULL)
+
+
+def pull_installation(root, manifest):
+    pull_image(manifest['image'])
+    compose(root, manifest, 'pull', 'proxy')
+
+
 def ensure_operable(root):
     if (root / 'upgrade-pending.json').exists():
         raise ValueError('An upgrade did not complete. Inspect upgrade-pending.json and restore its backup to a new directory; do not restart or downgrade this vault blindly.')
@@ -204,7 +241,7 @@ def start(root, manifest, pull=True, upgrading=False):
     if not upgrading:
         ensure_operable(root)
     if pull:
-        compose(root, manifest, 'pull')
+        pull_installation(root, manifest)
     compose(root, manifest, 'up', '-d', '--wait', '--wait-timeout', '120', '--pull', 'never')
 
 
@@ -270,7 +307,7 @@ def restore(root, directory, url=None, http_port=80, pull=True):
     private_write(key, (directory / 'master_key').read_text(), 0o444)
     with operation_lock(root):
         if pull:
-            compose(root, manifest, 'pull')
+            pull_installation(root, manifest)
         compose(root, manifest, 'create', 'secretpod')
         with (directory / 'data.tar').open('rb') as source:
             run(['docker', 'run', '--rm', '-i', '--user', '0', '--entrypoint', 'tar', '-v', manifest['project'] + '_vault-data:/data', manifest['image'], '-xpf', '-', '-C', '/data'], stdin=source)
@@ -284,7 +321,7 @@ def upgrade(root, manifest, image, pull=True):
     if image == manifest['image']:
         raise ValueError('Upgrade requires a different version tag or digest.')
     if pull:
-        run(['docker', 'pull', image])
+        pull_image(image)
     destination = root / 'backups' / (time.strftime('%Y%m%d-%H%M%S') + '-' + secrets.token_hex(3))
     backup(root, manifest, destination, resume=False)
     updated = dict(manifest, image=image)

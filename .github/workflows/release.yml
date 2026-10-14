@@ -8,10 +8,11 @@ jobs:
   release:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
+      - run: python3 -m unittest discover -s tests -p 'test_*.py'
       - uses: docker/setup-buildx-action@v3
       - name: Release coordinates
         id: release
@@ -40,3 +41,12 @@ jobs:
         run: |
           docker tag secretpod:test "$IMAGE:$VERSION"
           docker push "$IMAGE:$VERSION"
+      - name: Publish portable prebuilt image
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IMAGE: ${{ steps.release.outputs.image }}
+          VERSION: ${{ steps.release.outputs.version }}
+        run: |
+          docker save "$IMAGE:$VERSION" | gzip > secretpod-linux-amd64.tar.gz
+          sha256sum secretpod-linux-amd64.tar.gz > secretpod-linux-amd64.tar.gz.sha256
+          gh release create "v$VERSION" secretpod-linux-amd64.tar.gz secretpod-linux-amd64.tar.gz.sha256 --verify-tag --title "SecretPod $VERSION" --notes "Prebuilt Linux amd64 image. See docs/self-hosting.md for HTTPS setup, upgrades, backup and restore."
