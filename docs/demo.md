@@ -78,10 +78,10 @@ image context.
 ## Deploy the demo branch to Railway
 
 Keep shared demo code, the synthetic seed, and `deploy/demo.*` on `main`, where the
-root `Dockerfile` remains the production server build. On the separate `demo`
+root `Dockerfile` remains the production server build. On the separate `codex/demo`
 branch, copy `deploy/demo.Dockerfile` to the root `Dockerfile`. Railway detects that
 root file automatically and builds the static demo without a `railway.toml` file.
-When merging future changes from `main` into `demo`, retain the demo version of
+When merging future changes from `main` into `codex/demo`, retain the demo version of
 the root `Dockerfile` and synchronize it with `deploy/demo.Dockerfile` before
 redeploying. Do not merge that branch-specific root file back into `main`.
 
@@ -89,7 +89,7 @@ Configure one Railway service with these settings:
 
 | Setting | Value |
 | --- | --- |
-| Source branch | `demo` |
+| Source branch | `codex/demo` |
 | Root directory / build context | Repository root |
 | Builder | Dockerfile |
 | Dockerfile path | Root `Dockerfile` copied from `deploy/demo.Dockerfile` |
@@ -114,8 +114,8 @@ configurations have a separate migration deadline; see Railway's
 [configuration reference](https://docs.railway.com/config-as-code/reference).
 
 The Railway CLI can manage deployments after `railway login` and `railway link`.
-Once the `demo` branch has been pushed, connect it with
-`railway service source connect --repo mnkhtrbukhbold/secretpod --branch demo`.
+Once the `codex/demo` branch has been pushed, connect it with
+`railway service source connect --repo mnkhtrbukhbold/secretpod --branch codex/demo`.
 For subsequent manual releases, use `railway redeploy --from-source --yes`;
 `railway service status` and `railway logs` show the deployment result.
 
