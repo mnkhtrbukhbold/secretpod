@@ -14,7 +14,7 @@ Requires Docker Compose v2, curl, and a domain pointing to your server.
 curl -fsSL https://raw.githubusercontent.com/mnkhtrbukhbold/secretpod/v0.1.1/scripts/install.sh | sh -s -- --url https://vault.example.com
 ```
 
-Replace the hostname with your domain. Installation awaits the pending prebuilt image release.
+Replace the hostname with your domain.
 
 See the [self-hosting guide](docs/self-hosting.md) for HTTPS setup, backups, and upgrades.
 

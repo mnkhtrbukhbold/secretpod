@@ -117,7 +117,7 @@ sh "$HOME/secretpod/scripts/host.sh" upgrade --dir "$HOME/secretpod" --image ghc
 
 `VERSION` is a placeholder for the desired release; do not type it literally. The tool pulls before stopping the old app, takes a private backup, keeps the app stopped, changes the image, and waits for health. The key and data volume remain unchanged. It refuses unversioned images and `latest`.
 
-An interrupted or failed upgrade leaves `upgrade-pending.json`, including the recovery backup location, and ordinary startup is blocked. Restore that backup into a new installation. Do not manually start the old image against a database the candidate may have migrated. This release has no earlier published baseline; the lifecycle test verifies replacement with a distinct image, while the backend suite exercises schema migration separately.
+An interrupted or failed upgrade leaves `upgrade-pending.json`, including the recovery backup location, and ordinary startup is blocked. Restore that backup into a new installation. Do not manually start the old image against a database the candidate may have migrated. Automated lifecycle tests verify replacement with a distinct image, while the backend suite exercises schema migration separately.
 
 Management launchers pin the manager image separately from the app image. For a new manager release, use that release's launchers; `SECRETPOD_MANAGER_IMAGE` can select a tested version or digest explicitly. Existing installations keep their Compose configuration and key. Changing the app image alone does not replace installed scripts/templates.
 
